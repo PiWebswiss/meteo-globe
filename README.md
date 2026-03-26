@@ -49,12 +49,6 @@ Stop:
 docker compose down
 ```
 
-Exam preflight check:
-
-```bash
-bash scripts/exam-check.sh
-```
-
 ## Project layout
 
 - `server.py`: FastAPI backend (weather proxy, icon serving, config endpoint)

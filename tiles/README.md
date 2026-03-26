@@ -65,12 +65,6 @@ Or start both services in one command from the main compose file:
 docker compose up -d --build
 ```
 
-Quick exam preflight:
-
-```bash
-bash scripts/exam-check.sh
-```
-
 ## 4) Resource tips for Pi
 
 - Use region extracts only.
