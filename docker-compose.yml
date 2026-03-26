@@ -1,0 +1,12 @@
+services:
+  meteo-globe:
+    build: .
+    ports:
+      - "3000:3000"       # browser → http://localhost:3000
+    environment:
+      OWM_API_KEY: "48b9d1662ccd0d8136e5a8d23584aa20"   # ← paste your key here
+      PORT: 3000
+    restart: unless-stopped
+    volumes:
+      # Live-reload the public/ folder without rebuilding the image
+      - ./public:/app/public:ro
