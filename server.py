@@ -21,6 +21,8 @@ from pydantic import BaseModel
 load_dotenv()
 
 OWM_KEY = os.getenv("OWM_API_KEY", "")
+TILE_URL_TEMPLATE = os.getenv("TILE_URL_TEMPLATE", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
+TILE_ATTRIBUTION = os.getenv("TILE_ATTRIBUTION", "© OpenStreetMap contributors")
 PORT = int(os.getenv("PORT", "3000"))
 
 CH_BOUNDS = {"min_lat": 45.8, "max_lat": 47.9, "min_lon": 5.9, "max_lon": 10.5}
@@ -312,6 +314,15 @@ async def root():
     return FileResponse("public/index.html", headers={"Cache-Control": "no-store"})
 
 
+@app.get("/api/config", summary="Public frontend runtime config")
+async def config():
+    # Values here are intentionally frontend-visible.
+    return {
+        "tile_url_template": TILE_URL_TEMPLATE,
+        "tile_attribution": TILE_ATTRIBUTION,
+    }
+
+
 @app.get("/api/weather", summary="Current weather at a coordinate")
 async def weather(lat: float, lon: float, force: bool = False):
     try:
@@ -536,7 +547,7 @@ async def icon(code: int):
 
     raise HTTPException(
         status_code=404,
-        detail="Icon file not found locally. Run download_icons.py and rebuild the image.",
+        detail="Icon file not found locally in public/icons. Rebuild image with committed icon files.",
     )
 
 

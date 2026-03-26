@@ -1,5 +1,5 @@
 ﻿/*
-  MeteoGlobe - NASA WorldWind edition
+  MeteoGlobe - CesiumJS edition
   Core behavior: click weather, search, locate, forecast panel, weather FX.
 */
 
@@ -24,10 +24,8 @@ const HOME_VIEW = { lat: 20, lon: 10, range: 12_000_000 };
 const ROTATION_STEP_DEG = 0.08;
 const ROTATION_TICK_MS = 45;
 
-let wwd;
+let map;
 let weatherFX;
-let markerLayer;
-let cityLayer = null;
 let cityWeatherCache = [];
 let activeTarget = null;
 let activeMarkerData = null;
@@ -38,10 +36,13 @@ let rotateTimer = null;
 let searchTimer = null;
 let hintTimer = null;
 let cityRetryTimer = null;
-let worldwindLoadPromise = null;
+let cesiumLoadPromise = null;
+let runtimeConfig = null;
+let mapContextMenuBound = false;
 let zoomRenderTimer = null;
 let lastZoomTier = 1;
-let cityPlacemarkMap = new Map(); // name → {pm, pmIcon, tier}
+let cityPlacemarkMap = new Map(); // name -> {bubble, icon, tier}
+let activeMarkerObjects = [];
 
 // t: city tier — 1=megacity (always shown), 2=major city (shown at regional zoom), 3=smaller city (shown when zoomed in)
 const CITIES = [
@@ -139,24 +140,18 @@ const CITIES = [
   { name: 'Wellington',   lat: -41.29, lon: 174.78,  t: 3 },
 ];
 
-// Quick lookup: city name → tier
+// Quick lookup: city name ? tier
 const CITY_TIER = new Map(CITIES.map(c => [c.name, c.t]));
 
 // Zoom thresholds: returns max tier to display at given camera range (metres)
-// range > 5M  → only megacities (t≤1, ~22 cities)
-// range 1.5M–5M → major cities (t≤2, ~60 cities)
-// range < 1.5M → all cities   (t≤3, 93 cities)
+// range > 5M  ? only megacities (t=1, ~22 cities)
+// range 1.5M–5M ? major cities (t=2, ~60 cities)
+// range < 1.5M ? all cities   (t=3, 93 cities)
 function getMaxCityTier(range) {
   if (range > 5_000_000) return 1;
   if (range > 1_500_000) return 2;
   return 3;
 }
-
-const WORLDWIND_SOURCES = [
-  'https://worldwind.arc.nasa.gov/web/worldwind-0.11.0/worldwind.min.js',
-  'https://cdn.jsdelivr.net/npm/worldwindjs@1.9.0/build/dist/worldwind.min.js',
-  'https://unpkg.com/worldwindjs@1.9.0/build/dist/worldwind.min.js',
-];
 
 function loadScriptWithTimeout(src, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
@@ -186,35 +181,61 @@ function loadScriptWithTimeout(src, timeoutMs = 12000) {
   });
 }
 
-async function ensureWorldWindLoaded() {
-  if (window.WorldWind) return true;
-  if (worldwindLoadPromise) {
+function ensureStylesheetLoaded(href) {
+  if (document.querySelector(`link[data-href="${href}"]`)) return;
+  const link = document.createElement('link');
+  link.rel = 'stylesheet';
+  link.href = href;
+  link.setAttribute('data-href', href);
+  document.head.appendChild(link);
+}
+
+function rangeToZoom(range) {
+  const r = Math.max(2_000, asFiniteNumber(range, HOME_VIEW.range));
+  const z = 16 - Math.log2(r / 5_000);
+  return Math.max(2, Math.min(18, Math.round(z)));
+}
+
+function zoomToRange(zoom) {
+  const z = Math.max(2, Math.min(18, asFiniteNumber(zoom, 2)));
+  return 5_000 * (2 ** (16 - z));
+}
+
+async function ensureCesiumLoaded() {
+  if (window.Cesium?.Viewer) return true;
+  if (cesiumLoadPromise) {
     try {
-      await worldwindLoadPromise;
+      await cesiumLoadPromise;
     } catch (_) {}
-    return !!window.WorldWind;
+    return !!window.Cesium?.Viewer;
   }
 
-  worldwindLoadPromise = (async () => {
-    let lastErr = null;
-    for (const src of WORLDWIND_SOURCES) {
-      try {
-        await loadScriptWithTimeout(src);
-        if (window.WorldWind) return true;
-      } catch (err) {
-        lastErr = err;
-        console.warn('WorldWind source failed:', src, err?.message || err);
-      }
+  cesiumLoadPromise = (async () => {
+    const base = 'https://unpkg.com/cesium@1.126.0/Build/Cesium/';
+    window.CESIUM_BASE_URL = base;
+    ensureStylesheetLoaded(`${base}Widgets/widgets.css`);
+    await loadScriptWithTimeout(`${base}Cesium.js`, 22000);
+    if (!window.Cesium?.Viewer) {
+      throw new Error('Cesium script loaded but API unavailable');
     }
-    throw lastErr || new Error('No WorldWind source loaded successfully');
   })();
 
   try {
-    await worldwindLoadPromise;
-  } catch (err) {
-    console.error('WorldWind loading failed:', err);
+    await cesiumLoadPromise;
+  } catch (_) {
   }
-  return !!window.WorldWind;
+  return !!window.Cesium?.Viewer;
+}
+
+async function loadRuntimeConfig() {
+  if (runtimeConfig) return runtimeConfig;
+  let cfg = null;
+  try {
+    const res = await fetch('/api/config', { cache: 'no-store' });
+    if (res.ok) cfg = await res.json();
+  } catch (_) {}
+  runtimeConfig = cfg || {};
+  return runtimeConfig;
 }
 
 function isOverSwitzerland(lat, lon) {
@@ -250,22 +271,22 @@ function getMeteoIcon(owmCode, daytime = true) {
 }
 
 function getWeatherEmoji(owmCode, daytime = true) {
-  if (owmCode >= 200 && owmCode < 300) return '⛈️';
-  if (owmCode >= 300 && owmCode < 400) return '🌧️';
-  if (owmCode >= 500 && owmCode < 600) return '🌦️';
-  if (owmCode >= 600 && owmCode < 700) return '🌨️';
-  if (owmCode >= 700 && owmCode < 800) return '🌫️';
-  if (owmCode === 800) return daytime ? '☀️' : '🌙';
-  if (owmCode === 801) return '⛅';
-  if (owmCode === 802) return '🌤️';
-  if (owmCode === 803 || owmCode === 804) return '☁️';
-  return '❔';
+  if (owmCode >= 200 && owmCode < 300) return 'TS';
+  if (owmCode >= 300 && owmCode < 400) return 'DZ';
+  if (owmCode >= 500 && owmCode < 600) return 'RN';
+  if (owmCode >= 600 && owmCode < 700) return 'SN';
+  if (owmCode >= 700 && owmCode < 800) return 'FG';
+  if (owmCode === 800) return daytime ? 'SUN' : 'MOON';
+  if (owmCode === 801) return 'PCLD';
+  if (owmCode === 802) return 'SCLD';
+  if (owmCode === 803 || owmCode === 804) return 'CLD';
+  return 'WX';
 }
 
 function buildWeatherIconDataUrl(owmCode, daytime = true) {
-  const emoji = getWeatherEmoji(owmCode, daytime);
-  const iconText = escapeXml(emoji);
-  const svg = `\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">\n  <text x="48" y="62" text-anchor="middle" font-size="58" font-family="Segoe UI Emoji,Apple Color Emoji,Segoe UI Symbol,Arial,sans-serif" fill="#ffffff">${iconText}</text>\n</svg>`;
+  const txt = getWeatherEmoji(owmCode, daytime);
+  const iconText = escapeXml(txt);
+  const svg = `\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">\n  <rect x="8" y="8" width="80" height="80" rx="16" fill="#0d1b33"/>\n  <text x="48" y="58" text-anchor="middle" font-size="22" font-family="Inter,Segoe UI,Arial,sans-serif" fill="#ffffff" font-weight="700">${iconText}</text>\n</svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
@@ -434,8 +455,7 @@ async function fetchPointWeather(lat, lon, force = false) {
   if (isOverSwitzerland(lat, lon)) {
     try {
       return await fetchSwissPointWeather(lat, lon, force);
-    } catch (err) {
-      console.warn('MeteoSwiss point fetch failed, fallback to OWM:', err.message);
+    } catch (_) {
     }
   }
   return fetchWeatherAt(lat, lon, force);
@@ -531,7 +551,7 @@ function showPanel(data, opts = {}) {
 function hidePanel() {
   document.getElementById('weather-panel').classList.remove('active');
   if (weatherFX) weatherFX.clear();
-  if (markerLayer) markerLayer.removeAllRenderables();
+  clearActiveMarkers();
   activeMarkerData = null;
   activeTarget = null;
   renderCityMarkers(cityWeatherCache);
@@ -641,8 +661,7 @@ async function doSearch(q, dropdown) {
     const res = await fetch(apiPath('/api/geocode', { q }));
     if (!res.ok) throw new Error(await readErrorMessage(res));
     results = await res.json();
-  } catch (err) {
-    console.warn('Search failed:', err.message);
+  } catch (_) {
   }
 
   dropdown.innerHTML = '';
@@ -715,10 +734,10 @@ function stopRotation() {
 function startRotation() {
   if (rotateTimer) return;
   rotateTimer = setInterval(() => {
-    if (!wwd) return;
-    // Negative step for opposite rotation direction.
-    wwd.navigator.heading = (wwd.navigator.heading - ROTATION_STEP_DEG + 360) % 360;
-    wwd.redraw();
+    if (!map) return;
+    const h = asFiniteNumber(map.getHeading?.(), 0);
+    if (typeof map.setTilt === 'function') map.setTilt(45);
+    if (typeof map.setHeading === 'function') map.setHeading((h - ROTATION_STEP_DEG + 360) % 360);
   }, ROTATION_TICK_MS);
 }
 
@@ -734,48 +753,20 @@ function toggleRotation() {
 }
 
 function focusOn(lat, lon, range = 1_000_000) {
-  if (!wwd) return;
-  wwd.navigator.lookAtLocation.latitude = lat;
-  wwd.navigator.lookAtLocation.longitude = lon;
-  wwd.navigator.range = Math.max(2_000, range);
-  wwd.redraw();
+  if (!map) return;
+  const zoom = rangeToZoom(range);
+  map.panTo({ lat, lng: lon });
+  map.setZoom(zoom);
 }
 
 function zoomIn() {
-  if (!wwd) return;
-  wwd.navigator.range = Math.max(2_000, wwd.navigator.range * 0.72);
-  wwd.redraw();
+  if (!map) return;
+  map.setZoom(Math.min(20, (map.getZoom() ?? 2) + 1));
 }
 
 function zoomOut() {
-  if (!wwd) return;
-  wwd.navigator.range = Math.min(40_000_000, wwd.navigator.range * 1.35);
-  wwd.redraw();
-}
-
-function addBaseLayers() {
-  const layers = [
-    // NASA open imagery only (no proprietary providers).
-    new WorldWind.BMNGLayer(),
-    new WorldWind.BMNGLandsatLayer(),
-    new WorldWind.AtmosphereLayer(),
-    new WorldWind.StarFieldLayer(),
-  ];
-
-  layers.forEach(layer => {
-    layer.enabled = true;
-    wwd.addLayer(layer);
-  });
-}
-
-function initMarkerLayer() {
-  markerLayer = new WorldWind.RenderableLayer('Weather marker');
-  wwd.addLayer(markerLayer);
-}
-
-function initCityLayer() {
-  cityLayer = new WorldWind.RenderableLayer('Cities');
-  wwd.addLayer(cityLayer);
+  if (!map) return;
+  map.setZoom(Math.max(2, (map.getZoom() ?? 2) - 1));
 }
 
 function isNearActiveTarget(lat, lon) {
@@ -786,13 +777,93 @@ function isNearActiveTarget(lat, lon) {
   return Math.abs(activeTarget.lat - lat) <= 0.08 && Math.abs(activeTarget.lon - lon) <= 0.08;
 }
 
-function renderCityMarkers(results) {
-  if (!cityLayer) return;
-  cityLayer.removeAllRenderables();
+function clearCityMarkers() {
+  for (const { bubble, icon } of cityPlacemarkMap.values()) {
+    if (bubble) bubble.setMap(null);
+    if (icon) icon.setMap(null);
+  }
   cityPlacemarkMap.clear();
+}
 
-  const range = wwd?.navigator?.range ?? HOME_VIEW.range;
-  const maxTier = getMaxCityTier(range);
+function clearActiveMarkers() {
+  for (const m of activeMarkerObjects) m.setMap(null);
+  activeMarkerObjects = [];
+}
+
+function markerSizeValue(sizeOrNumber, fallback) {
+  if (sizeOrNumber && typeof sizeOrNumber.width === 'number') return sizeOrNumber.width;
+  const n = Number(sizeOrNumber);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function markerPointValue(pointOrNumber, axis, fallback) {
+  if (pointOrNumber && typeof pointOrNumber[axis] === 'number') return pointOrNumber[axis];
+  const n = Number(pointOrNumber);
+  return Number.isFinite(n) ? n : fallback;
+}
+
+function createImageMarker(lat, lon, url, width, height, anchorX, anchorY, zIndex = 1000, visible = true) {
+  if (!map?.viewer || !window.Cesium) {
+    return {
+      setMap() {},
+      setVisible() {},
+      setIcon() {},
+    };
+  }
+  const C = window.Cesium;
+  let removed = false;
+
+  const toPixelOffset = (w, h, ax, ay) => new C.Cartesian2(-ax, -ay);
+  const entity = map.viewer.entities.add({
+    position: C.Cartesian3.fromDegrees(lon, lat, 0),
+    show: !!visible,
+    billboard: {
+      image: url,
+      width,
+      height,
+      horizontalOrigin: C.HorizontalOrigin.LEFT,
+      verticalOrigin: C.VerticalOrigin.TOP,
+      pixelOffset: toPixelOffset(width, height, anchorX, anchorY),
+      eyeOffset: new C.Cartesian3(0, 0, zIndex / 10),
+      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+    },
+  });
+
+  return {
+    setMap(nextMap) {
+      if (removed) return;
+      if (!nextMap) {
+        map.viewer.entities.remove(entity);
+        removed = true;
+        return;
+      }
+      entity.show = true;
+    },
+    setVisible(nextVisible) {
+      if (removed) return;
+      entity.show = !!nextVisible;
+    },
+    setIcon(iconOpts) {
+      if (removed || !entity.billboard) return;
+      const nextUrl = iconOpts?.url || url;
+      const nextW = markerSizeValue(iconOpts?.scaledSize, width);
+      const nextH = markerSizeValue(iconOpts?.scaledSize?.height, height);
+      const nextAx = markerPointValue(iconOpts?.anchor, 'x', anchorX);
+      const nextAy = markerPointValue(iconOpts?.anchor?.y, 'y', anchorY);
+      entity.billboard.image = nextUrl;
+      entity.billboard.width = nextW;
+      entity.billboard.height = nextH;
+      entity.billboard.pixelOffset = toPixelOffset(nextW, nextH, nextAx, nextAy);
+    },
+  };
+}
+
+function renderCityMarkers(results) {
+  if (!map) return;
+  clearCityMarkers();
+
+  const zoom = map.getZoom() ?? 2;
+  const maxTier = getMaxCityTier(zoomToRange(zoom));
   lastZoomTier = maxTier;
 
   for (const r of results) {
@@ -805,50 +876,36 @@ function renderCityMarkers(results) {
     const day = isDaytime(w);
     const iconCode = getMeteoIcon(code, day);
     const temp = asFiniteNumber(w?.main?.temp, 0);
-    const pos = new WorldWind.Position(r.lat, r.lon, 1200);
+    const show = cityTier <= maxTier;
+    const bubbleUrl = buildRoundMarkerDataUrl({ name: r.name, temp, active: false, showName: true });
+    const bubble = createImageMarker(r.lat, r.lon, bubbleUrl, 83, 69, 41, 35, 1100, show);
 
-    const pm = new WorldWind.Placemark(pos, true, null);
-    pm.alwaysOnTop = true;
-    pm.enabled = cityTier <= maxTier;
-    const attrs = new WorldWind.PlacemarkAttributes(null);
-    attrs.imageSource = buildRoundMarkerDataUrl({ name: r.name, temp, active: false, showName: true });
-    attrs.imageScale = 0.52;
-    attrs.imageOffset = new WorldWind.Offset(WorldWind.OFFSET_FRACTION, 0.5, WorldWind.OFFSET_FRACTION, 0.0);
-    pm.attributes = attrs;
-    cityLayer.addRenderable(pm);
-
-    const pmIcon = new WorldWind.Placemark(pos, true, null);
-    pmIcon.alwaysOnTop = true;
-    pmIcon.enabled = cityTier <= maxTier;
-    const iconAttrs = new WorldWind.PlacemarkAttributes(null);
-    iconAttrs.imageSource = buildWeatherIconDataUrl(code, day);
-    // Keep scale conservative because official MeteoSwiss PNG assets are low-resolution.
-    iconAttrs.imageScale = 0.16;
-    iconAttrs.imageOffset = new WorldWind.Offset(WorldWind.OFFSET_FRACTION, 0.5, WorldWind.OFFSET_FRACTION, -0.20);
-    pmIcon.attributes = iconAttrs;
-    cityLayer.addRenderable(pmIcon);
+    const iconFallback = buildWeatherIconDataUrl(code, day);
+    const icon = createImageMarker(r.lat, r.lon, iconFallback, 26, 26, 13, 13, 1200, show);
     resolveWeatherIconSource(iconCode, code, day, (src) => {
-      iconAttrs.imageSource = src;
-      wwd.redraw();
+      icon.setIcon({
+        url: src,
+        scaledSize: { width: 26, height: 26 },
+        anchor: { x: 13, y: 13 },
+      });
     });
 
-    cityPlacemarkMap.set(r.name, { pm, pmIcon, tier: cityTier });
+    cityPlacemarkMap.set(r.name, { bubble, icon, tier: cityTier });
   }
-  wwd.redraw();
 }
 
 function updateCityTierVisibility() {
   if (!cityPlacemarkMap.size) return;
-  const range = wwd?.navigator?.range ?? HOME_VIEW.range;
-  const maxTier = getMaxCityTier(range);
+  const zoom = map?.getZoom?.() ?? 2;
+  // Reuse the same tier thresholds used during marker creation.
+  const maxTier = getMaxCityTier(zoomToRange(zoom));
   if (maxTier === lastZoomTier) return;
   lastZoomTier = maxTier;
-  for (const { pm, pmIcon, tier } of cityPlacemarkMap.values()) {
+  for (const { bubble, icon, tier } of cityPlacemarkMap.values()) {
     const show = tier <= maxTier;
-    pm.enabled = show;
-    if (pmIcon) pmIcon.enabled = show;
+    if (bubble) bubble.setVisible(show);
+    if (icon) icon.setVisible(show);
   }
-  wwd.redraw();
 }
 
 function scheduleCityRetry(delayMs = 30_000) {
@@ -887,8 +944,7 @@ async function loadCityMarkers(force = false) {
       flashHint('City weather unavailable. Check API/network.', 4200);
       scheduleCityRetry();
     }
-  } catch (err) {
-    console.warn('City markers failed:', err.message);
+  } catch (_) {
     if (!cityWeatherCache.length) {
       flashHint('City weather unavailable. Check API/network.', 4200);
       scheduleCityRetry();
@@ -897,64 +953,32 @@ async function loadCityMarkers(force = false) {
 }
 
 function setActiveMarker(lat, lon, temp, owmCode, day, name) {
-  if (!markerLayer) return;
-  markerLayer.removeAllRenderables();
-
-  const pos = new WorldWind.Position(lat, lon, 1600);
+  if (!map) return;
+  clearActiveMarkers();
   const iconCode = getMeteoIcon(owmCode, day);
-
-  const pm = new WorldWind.Placemark(pos, true, null);
-  pm.alwaysOnTop = true;
-  const attrs = new WorldWind.PlacemarkAttributes(null);
-  attrs.imageSource = buildRoundMarkerDataUrl({
+  const bubbleUrl = buildRoundMarkerDataUrl({
     name: name || 'Selected',
     temp: asFiniteNumber(temp, 0),
     active: true,
     showName: true,
   });
-  attrs.imageScale = 0.56;
-  attrs.imageOffset = new WorldWind.Offset(WorldWind.OFFSET_FRACTION, 0.5, WorldWind.OFFSET_FRACTION, 0.0);
-  pm.attributes = attrs;
-  markerLayer.addRenderable(pm);
+  const bubble = createImageMarker(lat, lon, bubbleUrl, 90, 74, 45, 37, 2200, true);
 
-  const pmIcon = new WorldWind.Placemark(pos, true, null);
-  pmIcon.alwaysOnTop = true;
-  const iconAttrs = new WorldWind.PlacemarkAttributes(null);
-  iconAttrs.imageSource = buildWeatherIconDataUrl(owmCode, day);
-  iconAttrs.imageScale = 0.18;
-  iconAttrs.imageOffset = new WorldWind.Offset(WorldWind.OFFSET_FRACTION, 0.5, WorldWind.OFFSET_FRACTION, -0.20);
-  pmIcon.attributes = iconAttrs;
-  markerLayer.addRenderable(pmIcon);
+  const iconFallback = buildWeatherIconDataUrl(owmCode, day);
+  const icon = createImageMarker(lat, lon, iconFallback, 30, 30, 15, 15, 2300, true);
   resolveWeatherIconSource(iconCode, owmCode, day, (src) => {
-    iconAttrs.imageSource = src;
-    wwd.redraw();
+    icon.setIcon({
+      url: src,
+      scaledSize: { width: 30, height: 30 },
+      anchor: { x: 15, y: 15 },
+    });
   });
-
-  wwd.redraw();
+  activeMarkerObjects = [bubble, icon];
 }
 
-function terrainCoordsFromMouseEvent(event) {
-  if (!wwd) return null;
-  const rect = wwd.canvas.getBoundingClientRect();
-  const x = event.clientX - rect.left;
-  const y = event.clientY - rect.top;
-
-  const pickList = wwd.pickTerrain(new WorldWind.Vec2(x, y));
-  if (!pickList) return null;
-
-  const terrainObj = typeof pickList.terrainObject === 'function' ? pickList.terrainObject() : null;
-  const position = terrainObj?.position || pickList?.objects?.[0]?.position || null;
-  if (!position) return null;
-
-  return {
-    lat: position.latitude,
-    lon: position.longitude,
-  };
-}
-
-async function onWorldWindPick(lat, lon, source = 'manual') {
+async function onMapPick(lat, lon, source = 'manual') {
   stopRotation();
-  focusOn(lat, lon, Math.max(2_500, (wwd?.navigator?.range || 900000) * 0.72));
+  focusOn(lat, lon, Math.max(2_500, (zoomToRange(map?.getZoom?.() ?? 2)) * 0.72));
   panelLoading();
   try {
     const data = await fetchPointWeather(lat, lon);
@@ -965,120 +989,221 @@ async function onWorldWindPick(lat, lon, source = 'manual') {
   }
 }
 
-function initWorldWind() {
-  const container = document.getElementById('globe-container');
-  container.innerHTML = '<canvas id="wwd-canvas"></canvas>';
-  const canvas = document.getElementById('wwd-canvas');
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
+function normalizeLon(lon) {
+  let out = lon;
+  while (out < -180) out += 360;
+  while (out > 180) out -= 360;
+  return out;
+}
 
-  wwd = new WorldWind.WorldWindow('wwd-canvas');
-  WorldWind.Logger.setLoggingLevel(WorldWind.Logger.LEVEL_WARNING);
+function getCameraRange(viewer) {
+  const h = viewer?.camera?.positionCartographic?.height;
+  return Number.isFinite(h) ? h : HOME_VIEW.range;
+}
 
-  addBaseLayers();
-  initMarkerLayer();
-  initCityLayer();
-  focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range);
+function getCameraCenter(viewer) {
+  if (!viewer || !window.Cesium) return { lat: HOME_VIEW.lat, lon: HOME_VIEW.lon };
+  const C = window.Cesium;
+  const scene = viewer.scene;
+  const canvas = scene?.canvas;
+  if (!canvas) return { lat: HOME_VIEW.lat, lon: HOME_VIEW.lon };
+  const ray = viewer.camera.getPickRay(new C.Cartesian2(canvas.clientWidth / 2, canvas.clientHeight / 2));
+  const picked = ray ? scene.globe.pick(ray, scene) : null;
+  if (picked) {
+    const cart = C.Cartographic.fromCartesian(picked);
+    return {
+      lat: C.Math.toDegrees(cart.latitude),
+      lon: C.Math.toDegrees(cart.longitude),
+    };
+  }
+  const cam = viewer.camera.positionCartographic;
+  if (cam) {
+    return {
+      lat: C.Math.toDegrees(cam.latitude),
+      lon: C.Math.toDegrees(cam.longitude),
+    };
+  }
+  return { lat: HOME_VIEW.lat, lon: HOME_VIEW.lon };
+}
 
-  let suppressPickUntil = 0;
-  let pickCandidate = false;
-  let pickStartX = 0;
-  let pickStartY = 0;
-  const suppressPick = (ms = 700) => {
-    suppressPickUntil = performance.now() + ms;
-    pickCandidate = false;
+function getHeadingDeg(viewer) {
+  if (!viewer || !window.Cesium) return 0;
+  const C = window.Cesium;
+  const h = C.Math.toDegrees(viewer.camera.heading || 0);
+  return ((h % 360) + 360) % 360;
+}
+
+function getTiltDeg(viewer) {
+  if (!viewer || !window.Cesium) return 45;
+  const C = window.Cesium;
+  const p = C.Math.toDegrees(viewer.camera.pitch || 0);
+  return Math.max(5, Math.min(85, Math.abs(p)));
+}
+
+function setCameraView(viewer, lat, lon, range, headingDeg = null, tiltDeg = null) {
+  if (!viewer || !window.Cesium) return;
+  const C = window.Cesium;
+  const h = headingDeg == null ? getHeadingDeg(viewer) : headingDeg;
+  const t = tiltDeg == null ? getTiltDeg(viewer) : tiltDeg;
+  viewer.camera.setView({
+    destination: C.Cartesian3.fromDegrees(normalizeLon(lon), Math.max(-85, Math.min(85, lat)), Math.max(2_000, range)),
+    orientation: {
+      heading: C.Math.toRadians(h),
+      pitch: C.Math.toRadians(-Math.max(5, Math.min(85, t))),
+      roll: 0,
+    },
+  });
+}
+
+function pickLatLonFromScreen(viewer, pos) {
+  if (!viewer || !window.Cesium || !pos) return null;
+  const C = window.Cesium;
+  const cartesian = viewer.camera.pickEllipsoid(pos, viewer.scene.globe.ellipsoid);
+  if (!cartesian) return null;
+  const cartographic = C.Cartographic.fromCartesian(cartesian);
+  return {
+    lat: C.Math.toDegrees(cartographic.latitude),
+    lon: C.Math.toDegrees(cartographic.longitude),
+  };
+}
+
+function createCesiumMapAdapter(viewer) {
+  const C = window.Cesium;
+  const listeners = {
+    click: [],
+    zoom_changed: [],
+    dragstart: [],
+  };
+  const emit = (type, payload) => {
+    const list = listeners[type] || [];
+    for (const cb of [...list]) {
+      try { cb(payload); } catch (_) {}
+    }
   };
 
-  canvas.addEventListener('mousedown', (ev) => {
-    if (ev.button !== 0 || ev.ctrlKey || ev.metaKey || ev.buttons !== 1) {
-      suppressPick();
-      return;
+  const handler = new C.ScreenSpaceEventHandler(viewer.scene.canvas);
+  handler.setInputAction((movement) => {
+    const ll = pickLatLonFromScreen(viewer, movement?.position);
+    if (!ll) return;
+    emit('click', {
+      latLng: {
+        lat: () => ll.lat,
+        lng: () => ll.lon,
+      },
+    });
+  }, C.ScreenSpaceEventType.LEFT_CLICK);
+  handler.setInputAction(() => emit('dragstart'), C.ScreenSpaceEventType.LEFT_DOWN);
+  handler.setInputAction(() => emit('dragstart'), C.ScreenSpaceEventType.MIDDLE_DOWN);
+  handler.setInputAction(() => emit('dragstart'), C.ScreenSpaceEventType.RIGHT_DOWN);
+
+  let lastZoom = rangeToZoom(getCameraRange(viewer));
+  viewer.camera.percentageChanged = 0.0008;
+  viewer.camera.changed.addEventListener(() => {
+    const z = rangeToZoom(getCameraRange(viewer));
+    if (z !== lastZoom) {
+      lastZoom = z;
+      emit('zoom_changed');
     }
-    pickCandidate = true;
-    pickStartX = ev.clientX;
-    pickStartY = ev.clientY;
-  }, true);
-
-  canvas.addEventListener('mousemove', (ev) => {
-    if (!pickCandidate) return;
-    const dx = ev.clientX - pickStartX;
-    const dy = ev.clientY - pickStartY;
-    if ((dx * dx + dy * dy) > 64) {
-      pickCandidate = false; // dragged, not a click
-    }
-  }, true);
-
-  canvas.addEventListener('mouseup', async (ev) => {
-    // Weather pick is strictly left mouse button only.
-    if (ev.button !== 0) {
-      pickCandidate = false;
-      return;
-    }
-    // Ignore Ctrl/Cmd-click variants that may emulate right-click.
-    if (ev.ctrlKey || ev.metaKey) {
-      pickCandidate = false;
-      return;
-    }
-    if (performance.now() < suppressPickUntil || !pickCandidate) {
-      pickCandidate = false;
-      return;
-    }
-    pickCandidate = false;
-    const p = terrainCoordsFromMouseEvent(ev);
-    if (!p) return;
-    await onWorldWindPick(p.lat, p.lon, 'manual');
-  }, true);
-
-  // Disable right-click interactions on the globe.
-  canvas.addEventListener('contextmenu', (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    suppressPick();
-  }, true);
-
-  // Block non-primary mouse button activation paths on some browsers.
-  canvas.addEventListener('auxclick', (ev) => {
-    ev.preventDefault();
-    ev.stopPropagation();
-    suppressPick();
-  }, true);
-
-  // Hard global right-click block to avoid accidental weather picks from browser/device quirks.
-  window.addEventListener('contextmenu', (ev) => {
-    ev.preventDefault();
-    suppressPick();
-  }, true);
-
-  window.addEventListener('auxclick', (ev) => {
-    if (ev.button !== 0) {
-      ev.preventDefault();
-      suppressPick();
-    }
-  }, true);
-
-  let rafPending = false;
-  canvas.addEventListener('wheel', (ev) => {
-    ev.preventDefault();
-    stopRotation();
-    const factor = ev.deltaY < 0 ? 0.84 : 1.18;
-    wwd.navigator.range = Math.max(2_000, Math.min(40_000_000, wwd.navigator.range * factor));
-    if (!rafPending) {
-      rafPending = true;
-      requestAnimationFrame(() => {
-        rafPending = false;
-        wwd.redraw();
-        updateCityTierVisibility();
-      });
-    }
-  }, { passive: false });
-
-  window.addEventListener('resize', () => {
-    canvas.width = window.innerWidth;
-    canvas.height = window.innerHeight;
-    wwd.redraw();
   });
 
-  setText('map-attrib', '3D viewer by NASA WorldWind | NASA Blue Marble imagery');
+  return {
+    viewer,
+    addListener(type, cb) {
+      if (!listeners[type]) listeners[type] = [];
+      listeners[type].push(cb);
+      return {
+        remove() {
+          listeners[type] = (listeners[type] || []).filter(fn => fn !== cb);
+        },
+      };
+    },
+    panTo({ lat, lng }) {
+      setCameraView(viewer, lat, lng, getCameraRange(viewer));
+    },
+    setZoom(z) {
+      const c = getCameraCenter(viewer);
+      setCameraView(viewer, c.lat, c.lon, zoomToRange(z));
+    },
+    getZoom() {
+      return rangeToZoom(getCameraRange(viewer));
+    },
+    getCenter() {
+      const c = getCameraCenter(viewer);
+      return {
+        lat: () => c.lat,
+        lng: () => c.lon,
+      };
+    },
+    getHeading() {
+      return getHeadingDeg(viewer);
+    },
+    setHeading(deg) {
+      const c = getCameraCenter(viewer);
+      setCameraView(viewer, c.lat, c.lon, getCameraRange(viewer), deg);
+    },
+    setTilt(deg) {
+      const c = getCameraCenter(viewer);
+      setCameraView(viewer, c.lat, c.lon, getCameraRange(viewer), null, deg);
+    },
+  };
+}
+
+function bindMapEventHandlers(nextMap) {
+  nextMap.addListener('click', async (ev) => {
+    if (!ev?.latLng) return;
+    await onMapPick(ev.latLng.lat(), ev.latLng.lng(), 'manual');
+  });
+  nextMap.addListener('zoom_changed', () => {
+    stopRotation();
+    clearTimeout(zoomRenderTimer);
+    zoomRenderTimer = setTimeout(updateCityTierVisibility, 80);
+  });
+  nextMap.addListener('dragstart', stopRotation);
+}
+
+function initMap() {
+  const container = document.getElementById('globe-container');
+  container.innerHTML = '';
+  const C = window.Cesium;
+  const tileTemplate = (runtimeConfig?.tile_url_template || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png').toString().trim();
+  const tileAttribution = (runtimeConfig?.tile_attribution || '© OpenStreetMap contributors').toString().trim();
+  const viewer = new C.Viewer(container, {
+    animation: false,
+    timeline: false,
+    baseLayerPicker: false,
+    geocoder: false,
+    homeButton: false,
+    sceneModePicker: false,
+    navigationHelpButton: false,
+    fullscreenButton: false,
+    infoBox: false,
+    selectionIndicator: false,
+    terrainProvider: new C.EllipsoidTerrainProvider(),
+    imageryProvider: new C.UrlTemplateImageryProvider({
+      url: tileTemplate,
+      credit: tileAttribution,
+      minimumLevel: 0,
+      maximumLevel: 19,
+    }),
+  });
+  viewer.scene.globe.enableLighting = true;
+  viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2_000;
+  viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000;
+  viewer.scene.screenSpaceCameraController.enableTilt = true;
+
+  map = createCesiumMapAdapter(viewer);
+  bindMapEventHandlers(map);
+  focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range);
+
+  if (!mapContextMenuBound) {
+    container.addEventListener('contextmenu', (ev) => {
+      ev.preventDefault();
+      ev.stopPropagation();
+    }, true);
+    mapContextMenuBound = true;
+  }
+
+  setText('map-attrib', `3D globe by CesiumJS | tiles ${tileAttribution}`);
 }
 
 function getCurrentPosition(options) {
@@ -1089,6 +1214,16 @@ function getCurrentPosition(options) {
     }
     navigator.geolocation.getCurrentPosition(resolve, reject, options);
   });
+}
+
+async function geolocationPermissionState() {
+  if (!navigator.permissions?.query) return 'unknown';
+  try {
+    const status = await navigator.permissions.query({ name: 'geolocation' });
+    return status?.state || 'unknown';
+  } catch (_) {
+    return 'unknown';
+  }
 }
 
 async function getBestCurrentPosition() {
@@ -1129,8 +1264,17 @@ async function getBestCurrentPosition() {
   }
 }
 
-async function locateAndShowUserWeather({ force = false, animate = true } = {}) {
+async function locateAndShowUserWeather({ force = false, animate = true, userInitiated = false } = {}) {
   try {
+    const permissionState = await geolocationPermissionState();
+    if (!userInitiated && permissionState !== 'granted') {
+      return;
+    }
+    if (permissionState === 'denied') {
+      flashHint('Location blocked by browser. Allow it in site settings (tune icon).', 5200);
+      return;
+    }
+
     flashHint('Locating your position...');
     const pos = await getBestCurrentPosition();
     const lat = pos.coords.latitude;
@@ -1184,7 +1328,7 @@ function initControls() {
   });
 
   if (locateBtn) locateBtn.addEventListener('click', async () => {
-    await locateAndShowUserWeather({ force: true, animate: true });
+    await locateAndShowUserWeather({ force: true, animate: true, userInitiated: true });
   });
 
   if (refreshBtn) refreshBtn.addEventListener('click', async () => {
@@ -1228,35 +1372,44 @@ function initControls() {
     else if (e.key === '-' || e.key === '_') zoomOut();
     else if (e.key === '0') focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range);
     else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'ArrowUp' || e.key === 'ArrowDown') {
-      if (!wwd) return;
+      if (!map) return;
       e.preventDefault();
       stopRotation();
-      const step = Math.max(0.1, Math.min(15, wwd.navigator.range / 1_200_000));
-      const nav = wwd.navigator.lookAtLocation;
-      if      (e.key === 'ArrowLeft')  nav.longitude -= step;
-      else if (e.key === 'ArrowRight') nav.longitude += step;
-      else if (e.key === 'ArrowUp')    nav.latitude = Math.min(89, nav.latitude + step);
-      else if (e.key === 'ArrowDown')  nav.latitude = Math.max(-89, nav.latitude - step);
-      wwd.redraw();
+      const zoom = map.getZoom() ?? 2;
+      const step = Math.max(0.05, 20 / (2 ** Math.max(0, zoom - 2)));
+      const center = map.getCenter?.();
+      if (!center) return;
+      let lat = center.lat();
+      let lon = center.lng();
+      if      (e.key === 'ArrowLeft')  lon -= step;
+      else if (e.key === 'ArrowRight') lon += step;
+      else if (e.key === 'ArrowUp')    lat = Math.min(85, lat + step);
+      else if (e.key === 'ArrowDown')  lat = Math.max(-85, lat - step);
+      if (lon < -180) lon += 360;
+      if (lon > 180) lon -= 360;
+      map.panTo({ lat, lng: lon });
     }
   });
 }
 
 function initWeatherFX() {
-  weatherFX = new WeatherFX(document.getElementById('weather-canvas'));
+  const canvas = document.getElementById('weather-canvas');
+  if (!canvas) return;
+  weatherFX = new WeatherFX(canvas);
   weatherFX.start();
 }
 
 async function main() {
   const loading = document.getElementById('loading-screen');
-  const loaded = await ensureWorldWindLoaded();
-  if (!loaded || !window.WorldWind) {
+  const loaded = await ensureCesiumLoaded();
+  if (!loaded || !window.Cesium?.Viewer) {
     if (loading) loading.classList.add('hidden');
-    flashHint('NASA WorldWind failed to load from all sources. Check network, VPN/ad-block, then hard refresh (Ctrl+F5).', 7000);
+    flashHint('CesiumJS failed to load. Check network and hard refresh (Ctrl+F5).', 7000);
     return;
   }
 
-  initWorldWind();
+  await loadRuntimeConfig();
+  initMap();
   initSearch();
   initControls();
   initWeatherFX();
@@ -1265,7 +1418,7 @@ async function main() {
 
   if (loading) loading.classList.add('hidden');
 
-  locateAndShowUserWeather({ force: false, animate: true });
+  locateAndShowUserWeather({ force: false, animate: true, userInitiated: false });
   loadCityMarkers();
 }
 
@@ -1328,3 +1481,5 @@ function initScreensaver() {
 
 document.addEventListener('DOMContentLoaded', main);
 document.addEventListener('DOMContentLoaded', initScreensaver);
+
+

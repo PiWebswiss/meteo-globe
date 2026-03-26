@@ -2,9 +2,14 @@ services:
   meteo-globe:
     build: .
     ports:
-      - "3000:3000"       # browser → http://localhost:3000
+      - "3000:3000"       # browser -> http://localhost:3000
     environment:
-      OWM_API_KEY: "48b9d1662ccd0d8136e5a8d23584aa20"   # ← paste your key here
+      # Optional: OpenWeatherMap backend key.
+      OWM_API_KEY: "48b9d1662ccd0d8136e5a8d23584aa20"
+      # Self-hosted tiles (default): run docker-compose.tileserver.yml on this host.
+      TILE_URL_TEMPLATE: "http://localhost:8081/tile/{z}/{x}/{y}.png"
+      # Visible map attribution string shown in UI.
+      TILE_ATTRIBUTION: "(c) OpenStreetMap contributors (self-hosted)"
       PORT: 3000
     restart: unless-stopped
     volumes:
