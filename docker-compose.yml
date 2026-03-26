@@ -1,12 +1,29 @@
 services:
+  tileserver:
+    image: overv/openstreetmap-tile-server:v2.2.0
+    container_name: meteo-tileserver
+    command: run
+    ports:
+      - "8081:80"       # self-hosted tile endpoint
+    shm_size: "256m"
+    environment:
+      THREADS: 2
+      ALLOW_CORS: enabled
+    volumes:
+      - osm-data:/data/database
+      - osm-tiles:/data/tiles
+    restart: unless-stopped
+
   meteo-globe:
     build: .
+    depends_on:
+      - tileserver
     ports:
       - "3000:3000"       # browser -> http://localhost:3000
     environment:
       # Optional: OpenWeatherMap backend key.
       OWM_API_KEY: "48b9d1662ccd0d8136e5a8d23584aa20"
-      # Self-hosted tiles (default): run docker-compose.tileserver.yml on this host.
+      # Self-hosted tiles (default): served by the local `tileserver` service.
       TILE_URL_TEMPLATE: "http://localhost:8081/tile/{z}/{x}/{y}.png"
       # Visible map attribution string shown in UI.
       TILE_ATTRIBUTION: "(c) OpenStreetMap contributors (self-hosted)"
@@ -15,3 +32,7 @@ services:
     volumes:
       # Live-reload the public/ folder without rebuilding the image
       - ./public:/app/public:ro
+
+volumes:
+  osm-data:
+  osm-tiles:

@@ -21,8 +21,8 @@ from pydantic import BaseModel
 load_dotenv()
 
 OWM_KEY = os.getenv("OWM_API_KEY", "")
-TILE_URL_TEMPLATE = os.getenv("TILE_URL_TEMPLATE", "https://tile.openstreetmap.org/{z}/{x}/{y}.png")
-TILE_ATTRIBUTION = os.getenv("TILE_ATTRIBUTION", "© OpenStreetMap contributors")
+TILE_URL_TEMPLATE = os.getenv("TILE_URL_TEMPLATE", "http://localhost:8081/tile/{z}/{x}/{y}.png")
+TILE_ATTRIBUTION = os.getenv("TILE_ATTRIBUTION", "(c) OpenStreetMap contributors (self-hosted)")
 PORT = int(os.getenv("PORT", "3000"))
 
 CH_BOUNDS = {"min_lat": 45.8, "max_lat": 47.9, "min_lon": 5.9, "max_lon": 10.5}

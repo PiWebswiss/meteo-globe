@@ -4,7 +4,7 @@ Interactive 3D weather globe with local MeteoSwiss icons.
 
 ## Requirements
 
-- Docker Desktop
+- Docker (Debian install guide: https://docs.docker.com/engine/install/debian/)
 - OpenWeatherMap key (optional, fallback exists)
 
 ## Configure keys
@@ -26,13 +26,7 @@ Notes:
 
 ## Run
 
-Start self-hosted tile server:
-
-```bash
-docker compose -f docker-compose.tileserver.yml up -d
-```
-
-Then start MeteoGlobe:
+Start everything (tileserver + app) with one command:
 
 ```bash
 docker compose up -d --build
@@ -52,8 +46,8 @@ docker compose down
 - `server.py`: FastAPI backend (weather proxy, icon serving, config endpoint)
 - `public/app.js`: globe UI, markers, weather panel
 - `public/icons/`: local MeteoSwiss icon assets
-- `docker-compose.yml`: app runtime env/config
-- `docker-compose.tileserver.yml`: self-hosted tile service
+- `docker-compose.yml`: app + self-hosted tile service
+- `docker-compose.tileserver.yml`: optional standalone tile-service compose
 
 ## Troubleshooting
 

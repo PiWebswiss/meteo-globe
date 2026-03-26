@@ -1,6 +1,8 @@
 # Self-Hosted Tiles (Raspberry Pi + Docker)
 
 This project can use a self-hosted raster tile server.
+Docker install guide for Debian/Raspberry Pi OS:
+https://docs.docker.com/engine/install/debian/
 
 ## 1) Import OSM data once
 
@@ -11,7 +13,7 @@ docker run --rm \
   -v /absolute/path/to/your-region.osm.pbf:/data/region.osm.pbf \
   -v osm-data:/data/database/ \
   -v osm-tiles:/data/tiles/ \
-  overv/openstreetmap-tile-server \
+  overv/openstreetmap-tile-server:v2.2.0 \
   import
 ```
 
@@ -21,9 +23,13 @@ Notes:
 
 ## 2) Run the tile server
 
+If you only want to run tileserver:
+
 ```bash
 docker compose -f docker-compose.tileserver.yml up -d
 ```
+
+The compose file pins `overv/openstreetmap-tile-server:v2.2.0` (includes arm64 support).
 
 Tiles endpoint:
 
@@ -38,10 +44,16 @@ Set in `docker-compose.yml` for MeteoGlobe:
 ```yaml
 environment:
   TILE_URL_TEMPLATE: "http://<PI_IP>:8081/tile/{z}/{x}/{y}.png"
-  TILE_ATTRIBUTION: "© OpenStreetMap contributors (self-hosted)"
+  TILE_ATTRIBUTION: "(c) OpenStreetMap contributors (self-hosted)"
 ```
 
 Then restart MeteoGlobe:
+
+```bash
+docker compose up -d --build
+```
+
+Or start both services in one command from the main compose file:
 
 ```bash
 docker compose up -d --build
@@ -52,4 +64,4 @@ docker compose up -d --build
 - Use region extracts only.
 - Keep `THREADS` low (1-2) on small Pi devices.
 - Keep `shm_size` >= `192m` if rendering errors mention shared memory.
-
+- Prefer SSD storage for tile DB/cache volumes; SD cards are usually too slow for good render latency.

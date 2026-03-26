@@ -1166,7 +1166,7 @@ function initMap() {
   container.innerHTML = '';
   const C = window.Cesium;
   const tileTemplate = (runtimeConfig?.tile_url_template || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png').toString().trim();
-  const tileAttribution = (runtimeConfig?.tile_attribution || '© OpenStreetMap contributors').toString().trim();
+  const tileAttribution = (runtimeConfig?.tile_attribution || '(c) OpenStreetMap contributors').toString().trim();
   const viewer = new C.Viewer(container, {
     animation: false,
     timeline: false,
@@ -1481,5 +1481,4 @@ function initScreensaver() {
 
 document.addEventListener('DOMContentLoaded', main);
 document.addEventListener('DOMContentLoaded', initScreensaver);
-
 
