@@ -13,7 +13,7 @@ docker run --rm \
   -v /absolute/path/to/your-region.osm.pbf:/data/region.osm.pbf \
   -v osm-data:/data/database/ \
   -v osm-tiles:/data/tiles/ \
-  overv/openstreetmap-tile-server:v2.2.0 \
+  overv/openstreetmap-tile-server:2.2.0 \
   import
 ```
 
@@ -29,7 +29,7 @@ If you only want to run tileserver:
 docker compose -f docker-compose.tileserver.yml up -d
 ```
 
-The compose file pins `overv/openstreetmap-tile-server:v2.2.0` (includes arm64 support).
+The compose file pins `overv/openstreetmap-tile-server:2.2.0` (includes arm64 support).
 
 Tiles endpoint:
 

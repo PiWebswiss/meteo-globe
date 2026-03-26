@@ -1,6 +1,6 @@
 services:
   tileserver:
-    image: overv/openstreetmap-tile-server:v2.2.0
+    image: overv/openstreetmap-tile-server:2.2.0
     container_name: meteo-tileserver
     command: run
     ports:
