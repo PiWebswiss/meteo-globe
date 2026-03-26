@@ -1161,12 +1161,42 @@ function bindMapEventHandlers(nextMap) {
   nextMap.addListener('dragstart', stopRotation);
 }
 
+function createNaturalEarthFallbackProvider(C) {
+  return new C.UrlTemplateImageryProvider({
+    url: `${C.buildModuleUrl('Assets/Textures/NaturalEarthII')}/{z}/{x}/{reverseY}.jpg`,
+    tilingScheme: new C.GeographicTilingScheme(),
+    maximumLevel: 5,
+  });
+}
+
+function renderTemplateTileUrl(template, z = 0, x = 0, y = 0) {
+  const maxIndex = (2 ** z) - 1;
+  const reverseY = maxIndex - y;
+  return template
+    .replace(/\{z\}/g, String(z))
+    .replace(/\{x\}/g, String(x))
+    .replace(/\{y\}/g, String(y))
+    .replace(/\{reverseY\}/g, String(reverseY))
+    .replace(/\{s\}/g, 'a');
+}
+
+async function probeRootTile(template) {
+  try {
+    const u = renderTemplateTileUrl(template, 0, 0, 0);
+    const res = await fetch(u, { method: 'GET', cache: 'no-store' });
+    return { ok: res.ok, status: res.status };
+  } catch (err) {
+    return { ok: false, status: 0, error: err };
+  }
+}
+
 function initMap() {
   const container = document.getElementById('globe-container');
   container.innerHTML = '';
   const C = window.Cesium;
   const tileTemplate = (runtimeConfig?.tile_url_template || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png').toString().trim();
   const tileAttribution = (runtimeConfig?.tile_attribution || '(c) OpenStreetMap contributors').toString().trim();
+  const fallbackProvider = createNaturalEarthFallbackProvider(C);
   const viewer = new C.Viewer(container, {
     animation: false,
     timeline: false,
@@ -1179,13 +1209,16 @@ function initMap() {
     infoBox: false,
     selectionIndicator: false,
     terrainProvider: new C.EllipsoidTerrainProvider(),
-    imageryProvider: new C.UrlTemplateImageryProvider({
+    imageryProvider: fallbackProvider,
+  });
+
+  const localProvider = new C.UrlTemplateImageryProvider({
       url: tileTemplate,
       credit: tileAttribution,
       minimumLevel: 0,
       maximumLevel: 19,
-    }),
   });
+  viewer.imageryLayers.addImageryProvider(localProvider);
   viewer.scene.globe.enableLighting = true;
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2_000;
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000;
@@ -1204,6 +1237,14 @@ function initMap() {
   }
 
   setText('map-attrib', `3D globe by CesiumJS | tiles ${tileAttribution}`);
+  probeRootTile(tileTemplate).then((state) => {
+    if (state.ok) return;
+    if (state.status === 404) {
+      flashHint('Regional tile dataset detected. Global fallback is shown until you zoom to imported areas.', 9000);
+      return;
+    }
+    flashHint('Tile server not reachable from browser. Check TILE_URL_TEMPLATE host/IP and CORS.', 9000);
+  });
 }
 
 function getCurrentPosition(options) {
@@ -1481,4 +1522,3 @@ function initScreensaver() {
 
 document.addEventListener('DOMContentLoaded', main);
 document.addEventListener('DOMContentLoaded', initScreensaver);
-

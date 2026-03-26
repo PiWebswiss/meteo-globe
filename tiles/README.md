@@ -37,6 +37,8 @@ Tiles endpoint:
 http://<PI_IP>:8081/tile/{z}/{x}/{y}.png
 ```
 
+If your import is regional (not planet), the app will show a low-res global fallback and then your detailed tiles as you zoom into imported coverage.
+
 ## 3) Point MeteoGlobe to your Pi tiles
 
 Set in `docker-compose.yml` for MeteoGlobe:

@@ -23,6 +23,7 @@ Notes:
 - `OWM_API_KEY` is optional. If missing, backend falls back to Open-Meteo.
 - `TILE_URL_TEMPLATE` points to your self-hosted tile endpoint.
 - Self-hosted tile setup for Raspberry Pi is in `tiles/README.md`.
+- When tiles are regional only, the app now shows a built-in low-res global fallback layer until you zoom into imported tile coverage.
 
 ## Run
 
