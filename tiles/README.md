@@ -13,7 +13,7 @@ docker run --rm \
   -v /absolute/path/to/your-region.osm.pbf:/data/region.osm.pbf \
   -v osm-data:/data/database/ \
   -v osm-tiles:/data/tiles/ \
-  overv/openstreetmap-tile-server:2.2.0 \
+  overv/openstreetmap-tile-server:2.3.0 \
   import
 ```
 
@@ -29,7 +29,7 @@ If you only want to run tileserver:
 docker compose -f docker-compose.tileserver.yml up -d
 ```
 
-The compose file pins `overv/openstreetmap-tile-server:2.2.0` (includes arm64 support).
+The compose file pins `overv/openstreetmap-tile-server:2.3.0` (includes arm64 support).
 
 Tiles endpoint:
 
@@ -46,6 +46,10 @@ Set in `docker-compose.yml` for MeteoGlobe:
 ```yaml
 environment:
   TILE_URL_TEMPLATE: "http://<PI_IP>:8081/tile/{z}/{x}/{y}.png"
+  TILE_MIN_LEVEL: 0
+  TILE_OVERLAY_MIN_ZOOM: 5
+  # Optional regional bounds (west,south,east,north):
+  # TILE_BOUNDS: "5.9,45.8,10.5,47.9"
   TILE_ATTRIBUTION: "(c) OpenStreetMap contributors (self-hosted)"
 ```
 
@@ -61,9 +65,17 @@ Or start both services in one command from the main compose file:
 docker compose up -d --build
 ```
 
+Quick exam preflight:
+
+```bash
+bash scripts/exam-check.sh
+```
+
 ## 4) Resource tips for Pi
 
 - Use region extracts only.
+- Keep `TILE_MIN_LEVEL` at `0` (or `1` max) and tune `TILE_OVERLAY_MIN_ZOOM` instead.
+- Set `TILE_BOUNDS` for regional imports to avoid full-globe blue overlays.
 - Keep `THREADS` low (1-2) on small Pi devices.
 - Keep `shm_size` >= `192m` if rendering errors mention shared memory.
 - Prefer SSD storage for tile DB/cache volumes; SD cards are usually too slow for good render latency.

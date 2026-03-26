@@ -1169,6 +1169,35 @@ function createNaturalEarthFallbackProvider(C) {
   });
 }
 
+function normalizeTileTemplateForClient(template) {
+  const raw = (template || '').toString().trim();
+  if (!raw) return raw;
+  if (raw.startsWith('/')) return raw;
+  try {
+    const u = new URL(raw, window.location.href);
+    const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
+    if (!localHosts.has(u.hostname)) return u.toString();
+    const pageHost = (window.location.hostname || '').trim();
+    if (!pageHost || localHosts.has(pageHost)) return u.toString();
+    u.hostname = pageHost;
+    return u.toString();
+  } catch (_) {
+    return raw;
+  }
+}
+
+function parseTileBoundsDegrees(raw) {
+  const s = (raw || '').toString().trim();
+  if (!s) return null;
+  const parts = s.split(',').map(v => Number(v.trim()));
+  if (parts.length !== 4 || parts.some(v => !Number.isFinite(v))) return null;
+  const [west, south, east, north] = parts;
+  if (west < -180 || west > 180 || east < -180 || east > 180) return null;
+  if (south < -90 || south > 90 || north < -90 || north > 90) return null;
+  if (east <= west || north <= south) return null;
+  return { west, south, east, north };
+}
+
 function renderTemplateTileUrl(template, z = 0, x = 0, y = 0) {
   const maxIndex = (2 ** z) - 1;
   const reverseY = maxIndex - y;
@@ -1194,8 +1223,15 @@ function initMap() {
   const container = document.getElementById('globe-container');
   container.innerHTML = '';
   const C = window.Cesium;
-  const tileTemplate = (runtimeConfig?.tile_url_template || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png').toString().trim();
+  const rawTileTemplate = (runtimeConfig?.tile_url_template || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png').toString().trim();
+  const tileTemplate = normalizeTileTemplateForClient(rawTileTemplate);
   const tileAttribution = (runtimeConfig?.tile_attribution || '(c) OpenStreetMap contributors').toString().trim();
+  const tileMinLevelRaw = asFiniteNumber(runtimeConfig?.tile_min_level, 0);
+  // Cesium docs warn against high minimumLevel on global rectangles; keep it tiny (0-1).
+  const tileMinLevel = Math.max(0, Math.min(1, Math.round(tileMinLevelRaw)));
+  const overlayMinZoomRaw = asFiniteNumber(runtimeConfig?.tile_overlay_min_zoom, 5);
+  const overlayMinZoom = Math.max(0, Math.min(18, Math.round(overlayMinZoomRaw)));
+  const tileBounds = parseTileBoundsDegrees(runtimeConfig?.tile_bounds);
   const fallbackProvider = createNaturalEarthFallbackProvider(C);
   const viewer = new C.Viewer(container, {
     animation: false,
@@ -1212,13 +1248,17 @@ function initMap() {
     imageryProvider: fallbackProvider,
   });
 
-  const localProvider = new C.UrlTemplateImageryProvider({
-      url: tileTemplate,
-      credit: tileAttribution,
-      minimumLevel: 0,
-      maximumLevel: 19,
-  });
-  viewer.imageryLayers.addImageryProvider(localProvider);
+  const localProviderOpts = {
+    url: tileTemplate,
+    credit: tileAttribution,
+    minimumLevel: tileMinLevel,
+    maximumLevel: 19,
+  };
+  if (tileBounds) {
+    localProviderOpts.rectangle = C.Rectangle.fromDegrees(tileBounds.west, tileBounds.south, tileBounds.east, tileBounds.north);
+  }
+  const localProvider = new C.UrlTemplateImageryProvider(localProviderOpts);
+  const localLayer = viewer.imageryLayers.addImageryProvider(localProvider);
   viewer.scene.globe.enableLighting = true;
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2_000;
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000;
@@ -1226,7 +1266,13 @@ function initMap() {
 
   map = createCesiumMapAdapter(viewer);
   bindMapEventHandlers(map);
+  const syncLocalLayerVisibility = () => {
+    const z = map?.getZoom ? map.getZoom() : rangeToZoom(getCameraRange(viewer));
+    localLayer.show = z >= overlayMinZoom;
+  };
+  map.addListener('zoom_changed', syncLocalLayerVisibility);
   focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range);
+  syncLocalLayerVisibility();
 
   if (!mapContextMenuBound) {
     container.addEventListener('contextmenu', (ev) => {
@@ -1240,7 +1286,19 @@ function initMap() {
   probeRootTile(tileTemplate).then((state) => {
     if (state.ok) return;
     if (state.status === 404) {
-      flashHint('Regional tile dataset detected. Global fallback is shown until you zoom to imported areas.', 9000);
+      flashHint(`Regional tile dataset detected. Global fallback stays visible until zoom >= ${overlayMinZoom}.`, 9000);
+      return;
+    }
+    if (tileTemplate.startsWith('/api/tile/')) {
+      if (state.status === 502) {
+        flashHint('Tile proxy cannot reach upstream tiles. Check tileserver service and TILE_UPSTREAM_URL_TEMPLATE.', 9000);
+        return;
+      }
+      flashHint(`Tile proxy error (${state.status || 'network'}). Check tileserver logs/import status.`, 9000);
+      return;
+    }
+    if (state.status > 0) {
+      flashHint(`Tile server returned HTTP ${state.status}. Check tile import/render logs.`, 9000);
       return;
     }
     flashHint('Tile server not reachable from browser. Check TILE_URL_TEMPLATE host/IP and CORS.', 9000);
