@@ -82,6 +82,8 @@ I verified local icon inventory after extraction: 84 PNG files, 0 SVG files. `/a
 
 After confirming icons are now vendored locally, I removed `download_icons.py` from the project and updated `Dockerfile` to stop copying/running it during image build. The build now uses the committed `public/icons` directory directly.
 
+I fixed city-marker layout and icon sharpness issues reported on map view. Marker labels are now rendered inside the same SVG bubble asset (instead of a separate placemark), which prevents name-strip drift. I also reintroduced dedicated weather icon placemarks sourced from local `/api/icon/{code}` files with reduced scale to avoid blurry upscaling. Cache-busting bumped to `app.js?v=nasa3d23`.
+
 I moved all weather icons to local files to eliminate the external CDN dependency entirely.
 
 All MeteoSwiss CDN URL patterns tried previously now return 404 (the URLs have changed or been removed). Instead of relying on external icon fetching, I created `download_icons.py` — a standalone script that generates all 84 weather icons (codes 1–42 day, 101–142 night) as SVG files into `public/icons/`. The icons use a consistent dark-theme style (`#0d1b33` background, rounded corners) with proper SVG shapes for each weather condition (sun/moon/cloud/rain/snow/thunder/fog and combinations). The `Dockerfile` now runs `python download_icons.py` at build time so icons are always present in the image. In `server.py`, the `/api/icon/{code}` endpoint now checks `public/icons/{code}.svg` (then `.png`) before attempting any network fetch — at runtime, icons are served from disk with zero external requests.
