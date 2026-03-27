@@ -12,7 +12,10 @@ from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from typing import Any
 
+import logging
 import httpx
+
+logger = logging.getLogger("meteo")
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException, Response
 from fastapi.responses import FileResponse
@@ -203,12 +206,36 @@ async def fetch_json(
     return data
 
 
+def _extract_place_name(data: Any) -> tuple[str, str]:
+    """Extract city/town name and country code from a Nominatim response dict."""
+    if not isinstance(data, dict):
+        return "Selected location", ""
+    address = data.get("address") if isinstance(data, dict) else {}
+    if not isinstance(address, dict):
+        address = {}
+    name = (
+        address.get("city")
+        or address.get("town")
+        or address.get("village")
+        or address.get("hamlet")
+        or address.get("suburb")
+        or address.get("municipality")
+        or address.get("county")
+        or address.get("state")
+        or str(data.get("display_name") or "").split(",")[0].strip()
+        or str(data.get("name") or "").strip()
+        or "Selected location"
+    )
+    country = str(address.get("country_code") or "").upper()
+    return name, country
+
+
 async def reverse_geocode_brief(lat: float, lon: float, force: bool = False) -> tuple[str, str]:
     key = f"revgeo_{lat:.3f}_{lon:.3f}"
     if not force:
         cached = cache_get(key)
         if isinstance(cached, dict):
-            return str(cached.get("name") or "Selected location"), str(cached.get("country") or "")
+            return _extract_place_name(cached)
 
     try:
         data = await fetch_json(
@@ -219,25 +246,9 @@ async def reverse_geocode_brief(lat: float, lon: float, force: bool = False) -> 
             params={"lat": lat, "lon": lon, "format": "jsonv2", "addressdetails": 1, "zoom": 14},
             force=force,
         )
-        address = data.get("address") if isinstance(data, dict) else {}
-        if not isinstance(address, dict):
-            address = {}
-        name = (
-            address.get("city")
-            or address.get("town")
-            or address.get("village")
-            or address.get("hamlet")
-            or address.get("suburb")
-            or address.get("municipality")
-            or address.get("county")
-            or address.get("state")
-            or str(data.get("display_name") or "").split(",")[0].strip()
-            or str(data.get("name") or "").strip()
-            or "Selected location"
-        )
-        country = str(address.get("country_code") or "").upper()
-        return name, country
-    except Exception:
+        return _extract_place_name(data)
+    except Exception as exc:
+        logger.warning("reverse_geocode_brief failed for (%s, %s): %s", lat, lon, exc)
         return "Selected location", ""
 
 

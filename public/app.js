@@ -20,7 +20,7 @@ const OWM_TO_METEO = {
 };
 
 const HOME_VIEW = { lat: 20, lon: 10, range: 12_000_000 };
-const ROTATION_STEP_DEG = 0.15;
+const ROTATION_STEP_DEG = 0.04;
 const ROTATION_TICK_MS = 30;
 
 let map;
@@ -1488,21 +1488,18 @@ async function main() {
 
   if (loading) loading.classList.add('hidden');
 
-  locateAndShowUserWeather({ force: false, animate: true, userInitiated: false })
-    .then(() => {
-      // If ambient weather wasn't set (no geolocation), fetch for default location
-      if (ambientWeatherCode == null) {
-        fetchPointWeather(HOME_VIEW.lat, HOME_VIEW.lon, false).then(data => {
-          const w0 = data?.weather?.[0];
-          ambientWeatherCode = Number.isFinite(Number(w0?.id)) ? Number(w0.id) : 800;
-          ambientWeatherDay = isDaytime(data);
-          if (weatherFX && !activeMarkerData) {
-            weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
-          }
-        }).catch(() => {});
-      }
-    });
+  // Fetch weather for default location immediately so it shows at startup
+  fetchPointWeather(HOME_VIEW.lat, HOME_VIEW.lon, false).then(data => {
+    const w0 = data?.weather?.[0];
+    ambientWeatherCode = Number.isFinite(Number(w0?.id)) ? Number(w0.id) : 800;
+    ambientWeatherDay = isDaytime(data);
+    if (weatherFX && !activeMarkerData) {
+      weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
+    }
+  }).catch(() => {});
   loadCityMarkers();
+  // Then try geolocation to override with user's actual location
+  locateAndShowUserWeather({ force: false, animate: true, userInitiated: false });
 }
 
 function initScreensaver() {
@@ -1537,13 +1534,10 @@ function initScreensaver() {
     if (weatherFX && ambientWeatherCode != null) {
       weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
     }
-    // Hide city markers for clean screensaver look
-    for (const { bubble, icon } of cityPlacemarkMap.values()) {
-      if (bubble?.setVisible) bubble.setVisible(false);
-      if (icon?.setVisible) icon.setVisible(false);
-    }
-    // Zoom out for a full-globe spinning view
-    focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range * 1.5);
+    // Keep city markers visible during screensaver to show weather on earth
+    updateCityTierVisibility();
+    // Zoom to a nice globe view — close enough to see weather markers
+    focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range * 0.7);
     if (rotateTimer) stopRotation();
     clearTimeout(spinDelayTimer);
     spinDelayTimer = setTimeout(() => {
