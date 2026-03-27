@@ -37,7 +37,7 @@ class WeatherFX {
     this._raf = requestAnimationFrame(loop);
   }
 
-  // Feed any OpenWeatherMap condition code (200-804) + day/night hint.
+  // Feed any weather condition code (200-804) + day/night hint.
   setWeather(owmCode, daytime = true) {
     const next = WeatherFX._codeToEffect(owmCode, daytime);
     const nextTarget = WeatherFX._effectIntensity(next);

@@ -28,7 +28,6 @@ def env_int(name: str, default: int) -> int:
         return default
 
 
-OWM_KEY = os.getenv("OWM_API_KEY", "")
 TILE_URL_TEMPLATE = os.getenv("TILE_URL_TEMPLATE", "http://localhost:8081/tile/{z}/{x}/{y}.png")
 TILE_UPSTREAM_URL_TEMPLATE = os.getenv("TILE_UPSTREAM_URL_TEMPLATE", TILE_URL_TEMPLATE)
 TILE_ATTRIBUTION = os.getenv("TILE_ATTRIBUTION", "(c) OpenStreetMap contributors (self-hosted)")
@@ -36,8 +35,6 @@ TILE_MIN_LEVEL = env_int("TILE_MIN_LEVEL", 0)
 TILE_OVERLAY_MIN_ZOOM = env_int("TILE_OVERLAY_MIN_ZOOM", 5)
 TILE_BOUNDS = os.getenv("TILE_BOUNDS", "").strip()
 PORT = env_int("PORT", 3000)
-
-CH_BOUNDS = {"min_lat": 45.8, "max_lat": 47.9, "min_lon": 5.9, "max_lon": 10.5}
 
 # key -> {"data": ..., "expires_at": ...}
 _cache: dict[str, dict[str, Any]] = {}
@@ -101,13 +98,6 @@ def iso_utc_to_unix(ts: Any) -> int | None:
         return int(dt.timestamp())
     except Exception:
         return None
-
-
-def in_switzerland(lat: float, lon: float) -> bool:
-    return (
-        CH_BOUNDS["min_lat"] <= lat <= CH_BOUNDS["max_lat"]
-        and CH_BOUNDS["min_lon"] <= lon <= CH_BOUNDS["max_lon"]
-    )
 
 
 def open_meteo_code_to_owm(code: Any) -> int:
@@ -249,22 +239,6 @@ async def reverse_geocode_brief(lat: float, lon: float, force: bool = False) -> 
 
 
 async def weather_payload(lat: float, lon: float, force: bool = False) -> dict[str, Any]:
-    owm_key_ok = bool(OWM_KEY and OWM_KEY != "YOUR_OWM_API_KEY_HERE")
-
-    if owm_key_ok:
-        key = f"weather_{lat:.4f}_{lon:.4f}"
-        url = "https://api.openweathermap.org/data/2.5/weather"
-        try:
-            data = await fetch_json(
-                url,
-                key,
-                params={"lat": lat, "lon": lon, "appid": OWM_KEY, "units": "metric", "lang": "en"},
-                force=force,
-            )
-            return data if isinstance(data, dict) else {}
-        except Exception:
-            pass
-
     place_name, country_code = await reverse_geocode_brief(lat, lon, force=force)
     om_key = f"om_current_{lat:.4f}_{lon:.4f}"
     om_url = "https://api.open-meteo.com/v1/forecast"
@@ -386,20 +360,6 @@ async def weather(lat: float, lon: float, force: bool = False):
 
 @app.get("/api/forecast", summary="48h forecast at a coordinate")
 async def forecast(lat: float, lon: float, force: bool = False):
-    owm_key_ok = bool(OWM_KEY and OWM_KEY != "YOUR_OWM_API_KEY_HERE")
-
-    if owm_key_ok:
-        key = f"forecast_{lat:.3f}_{lon:.3f}"
-        try:
-            return await fetch_json(
-                "https://api.openweathermap.org/data/2.5/forecast",
-                key,
-                params={"lat": lat, "lon": lon, "appid": OWM_KEY, "units": "metric", "lang": "en", "cnt": 16},
-                force=force,
-            )
-        except Exception:
-            pass
-
     om_key = f"om_forecast_{lat:.3f}_{lon:.3f}"
     payload = await fetch_json(
         "https://api.open-meteo.com/v1/forecast",
@@ -474,19 +434,6 @@ async def geocode(q: str):
     if cached is not None:
         return cached
 
-    if OWM_KEY and OWM_KEY != "YOUR_OWM_API_KEY_HERE":
-        try:
-            data = await fetch_json(
-                "https://api.openweathermap.org/geo/1.0/direct",
-                key,
-                ttl=3600,
-                params={"q": qq, "limit": 8, "appid": OWM_KEY},
-            )
-            if isinstance(data, list) and data:
-                return data
-        except Exception:
-            pass
-
     try:
         raw = await fetch_json(
             "https://nominatim.openstreetmap.org/search",
@@ -530,56 +477,7 @@ async def geocode(q: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@app.get("/api/meteoswiss/stations", summary="MeteoSwiss station feed")
-async def meteoswiss_stations(force: bool = False):
-    try:
-        return await fetch_json(
-            "https://data.geo.admin.ch/ch.meteoschweiz.messwerte-aktuell/ch.meteoschweiz.messwerte-aktuell_en.json",
-            "ms_stations",
-            ttl=300,
-            headers={"User-Agent": "MeteoGlobe/1.0"},
-            force=force,
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.get("/api/meteoswiss/forecast", summary="MeteoSwiss forecast for CH")
-async def meteoswiss_forecast(lat: float, lon: float, force: bool = False):
-    key = f"ms_forecast_{lat:.4f}_{lon:.4f}"
-    if not force:
-        cached = cache_get(key)
-        if cached is not None:
-            return cached
-
-    try:
-        data = await fetch_json(
-            "https://app-prod-ws.meteoswiss-app.ch/v1/forecast",
-            key,
-            params={"lat": lat, "lon": lon},
-            headers={"User-Agent": "MeteoSwissApp/2.3.3", "Accept": "application/json"},
-            force=force,
-        )
-        cache_set(key, data, ttl=600)
-        return data
-    except Exception:
-        return await forecast(lat=lat, lon=lon, force=force)
-
-
-@app.get("/api/meteoswiss/point", summary="Point weather for CH")
-async def meteoswiss_point(lat: float, lon: float, force: bool = False):
-    if not in_switzerland(lat, lon):
-        raise HTTPException(status_code=400, detail="Point is outside Switzerland bounds")
-
-    # Keep API contract for frontend, but use robust weather payload fallback.
-    data = await weather_payload(lat, lon, force=force)
-    data["_source"] = "meteoswiss_point"
-    data["sys"] = {"country": "CH", "sunrise": data.get("sys", {}).get("sunrise"), "sunset": data.get("sys", {}).get("sunset")}
-    data["ms"] = {"station": None, "forecast_source": "fallback-weather"}
-    return data
-
-
-@app.get("/api/icon/{code}", summary="MeteoSwiss weather pictogram from local files")
+@app.get("/api/icon/{code}", summary="Weather pictogram from local files")
 async def icon(code: int):
     if code not in SUPPORTED_ICON_CODES:
         raise HTTPException(status_code=400, detail="Icon code must be 1-42 or 101-142")

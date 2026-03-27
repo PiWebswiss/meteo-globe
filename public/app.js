@@ -19,7 +19,6 @@ const OWM_TO_METEO = {
   741: { d: 25, n: 25 },
 };
 
-const CH_BOUNDS = { minLat: 45.8, maxLat: 47.9, minLon: 5.9, maxLon: 10.5 };
 const HOME_VIEW = { lat: 20, lon: 10, range: 12_000_000 };
 const ROTATION_STEP_DEG = 0.15;
 const ROTATION_TICK_MS = 30;
@@ -238,11 +237,6 @@ async function loadRuntimeConfig() {
   } catch (_) {}
   runtimeConfig = cfg || {};
   return runtimeConfig;
-}
-
-function isOverSwitzerland(lat, lon) {
-  return lat >= CH_BOUNDS.minLat && lat <= CH_BOUNDS.maxLat
-      && lon >= CH_BOUNDS.minLon && lon <= CH_BOUNDS.maxLon;
 }
 
 function setText(id, text) {
@@ -579,45 +573,17 @@ async function loadForecast(lat, lon, force = false) {
   const src = document.getElementById('data-source');
 
   try {
-    let list = null;
-    let source = 'OpenWeatherMap';
-
     const res = await fetch(apiPath('/api/forecast', { lat, lon, force }));
     if (!res.ok) throw new Error(await readErrorMessage(res));
     const data = await res.json();
-    list = data?.list || [];
-    if (data?._source === 'open-meteo') source = 'Open-Meteo';
+    const list = data?.list || [];
 
-    src.textContent = source;
+    src.textContent = 'Open-Meteo';
     renderForecast(scroll, list);
   } catch (err) {
     const msg = err?.message || 'Forecast unavailable';
     scroll.innerHTML = `<div class="forecast-placeholder">Forecast unavailable (${msg})</div>`;
   }
-}
-
-function buildMSForecastList(ms) {
-  const f = ms.forecast3h || ms.forecast1h || [];
-  const base = ms.currentWeather?.time || Math.floor(Date.now() / 1000);
-  return f.slice(0, 16).map((item, i) => ({
-    dt: base + i * 3 * 3600,
-    main: { temp: item.tt ?? item.temperature ?? 0 },
-    weather: [{ id: meteoCodeToOwm(item.weatherIcon || item.symbol || 1), description: 'forecast' }],
-    pop: Math.max(0, Math.min(1, (item.precipitation ?? 0) / 10)),
-  }));
-}
-
-function meteoCodeToOwm(msCode) {
-  const c = msCode > 100 ? msCode - 100 : msCode;
-  if (c === 1) return 800;
-  if (c === 2) return 801;
-  if (c === 3) return 802;
-  if (c === 4 || c === 5) return 803;
-  if (c >= 6 && c <= 9) return 500;
-  if (c >= 13 && c <= 15) return 601;
-  if (c >= 20 && c <= 23) return 200;
-  if (c >= 24 && c <= 25) return 741;
-  return 800;
 }
 
 function renderForecast(scroll, list) {

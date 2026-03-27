@@ -1,5 +1,16 @@
 # Dev Log
 
+## 2026-03-27
+
+I simplified the weather backend to use a single data source. Removed OpenWeatherMap and MeteoSwiss API integrations entirely — the app now uses only Open-Meteo for all weather data (current conditions + forecasts) and Nominatim for geocoding. This eliminates the need for any API key.
+
+Changes:
+- `server.py`: removed `OWM_KEY`, `CH_BOUNDS`, `in_switzerland()`, MeteoSwiss endpoints (`/api/meteoswiss/stations`, `/api/meteoswiss/forecast`, `/api/meteoswiss/point`), and all OWM fallback branches in `/api/weather`, `/api/forecast`, and `/api/geocode`.
+- `public/app.js`: removed `CH_BOUNDS`, `isOverSwitzerland()`, `buildMSForecastList()`, `meteoCodeToOwm()`, and updated forecast source label to always show "Open-Meteo".
+- `docker-compose.yml`: removed `OWM_API_KEY` environment variable.
+- `README.md`: updated to reflect Open-Meteo as sole weather source, removed OWM key references.
+- Local weather icons (`public/icons/`) are still used for all display.
+
 ## 2026-03-25
 
 Today I updated the project for the exam version and cleaned the interaction flow.

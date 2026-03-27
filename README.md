@@ -1,19 +1,17 @@
 # MeteoGlobe
 
-Interactive 3D weather globe with local MeteoSwiss icons.
+Interactive 3D weather globe powered by Open-Meteo (free, no API key needed).
 
 ## Requirements
 
 - Docker (Debian install guide: https://docs.docker.com/engine/install/debian/)
-- OpenWeatherMap key (optional, fallback exists)
 
-## Configure keys
+## Configure
 
 Edit `docker-compose.yml`:
 
 ```yaml
 environment:
-  OWM_API_KEY: "YOUR_OWM_KEY" # optional
   TILE_URL_TEMPLATE: "http://localhost:8081/tile/{z}/{x}/{y}.png"
   TILE_MIN_LEVEL: 0
   TILE_OVERLAY_MIN_ZOOM: 5
@@ -24,7 +22,7 @@ environment:
 
 Notes:
 - The globe renderer is CesiumJS.
-- `OWM_API_KEY` is optional. If missing, backend falls back to Open-Meteo.
+- Weather data comes from Open-Meteo (no API key required).
 - `TILE_URL_TEMPLATE` points to your tile endpoint (default browser-direct to `:8081`).
 - `TILE_MIN_LEVEL` should stay low (`0` or `1`) for Cesium stability.
 - `TILE_OVERLAY_MIN_ZOOM` controls when the self-hosted layer is shown (default `5`).
@@ -53,7 +51,7 @@ docker compose down
 
 - `server.py`: FastAPI backend (weather proxy, icon serving, config endpoint)
 - `public/app.js`: globe UI, markers, weather panel
-- `public/icons/`: local MeteoSwiss icon assets
+- `public/icons/`: local weather icon assets
 - `docker-compose.yml`: app + self-hosted tile service
 - `docker-compose.tileserver.yml`: optional standalone tile-service compose
 

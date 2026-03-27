@@ -21,8 +21,6 @@ services:
     ports:
       - "3000:3000"       # browser -> http://localhost:3000
     environment:
-      # Optional: OpenWeatherMap backend key.
-      OWM_API_KEY: "48b9d1662ccd0d8136e5a8d23584aa20"
       # Self-hosted tiles (default): browser fetches from host port 8081.
       TILE_URL_TEMPLATE: "http://localhost:8081/tile/{z}/{x}/{y}.png"
       # Optional: backend proxy upstream (used only if you switch frontend to /api/tile/...).
