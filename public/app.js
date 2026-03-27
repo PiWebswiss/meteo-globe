@@ -355,36 +355,83 @@ function tempBadgeText(c) {
   return `${v > 0 ? '+' : ''}${v}\u00B0C`;
 }
 
-// Modern glass pill for city weather markers (4x resolution for crisp text).
-// City/village names come from Esri label overlay, so we only show weather here.
-function buildCityLabelDataUrl({ temp }) {
+// Canvas-rendered pill for city weather markers.
+// Uses 2x internal scale and renders text at high quality for Cesium billboard.
+function buildCityLabelCanvas({ temp }) {
   const t = asFiniteNumber(temp, 0);
   const color = tempColor(t);
-  const tempTxt = escapeXml(tempBadgeText(t));
-  // Render at 576x204, display at 96x34 → 6x crisp for sharp WebGL textures
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="576" height="204">
-  <rect x="6" y="6" width="564" height="192" rx="96" fill="rgba(10,18,36,0.92)"/>
-  <rect x="6" y="6" width="564" height="192" rx="96" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="5"/>
-  <circle cx="102" cy="102" r="26" fill="${color}" opacity="0.45"/>
-  <text x="348" y="130" text-anchor="middle" font-size="82" font-weight="800" font-family="Inter,Arial,sans-serif" fill="#ffffff" stroke="rgba(0,0,0,0.3)" stroke-width="2" paint-order="stroke">${tempTxt}</text>
-</svg>`;
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  const tempTxt = tempBadgeText(t);
+  // Display size 96x34. Canvas at 2x = 192x68 pixels.
+  // Cesium billboard scale = 0.5 → maps 192px canvas to 96px display, pixel-perfect.
+  const S = 2;
+  const W = 96 * S, H = 34 * S;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+
+  // Pill background
+  ctx.beginPath();
+  ctx.roundRect(2 * S, 2 * S, W - 4 * S, H - 4 * S, (H / 2) - 2 * S);
+  ctx.fillStyle = 'rgba(10,18,36,0.92)';
+  ctx.fill();
+  ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+  ctx.lineWidth = 1.5 * S;
+  ctx.stroke();
+
+  // Color dot on the left
+  ctx.beginPath();
+  ctx.arc(17 * S, 17 * S, 5 * S, 0, Math.PI * 2);
+  ctx.fillStyle = color;
+  ctx.globalAlpha = 0.5;
+  ctx.fill();
+  ctx.globalAlpha = 1;
+
+  // Temperature text
+  ctx.font = `800 ${14 * S}px Inter, Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(tempTxt, 58 * S, 17.5 * S);
+
+  return c;
 }
 
-// Compact tooltip shown when user clicks/selects a location (6x resolution).
-function buildActiveMarkerDataUrl({ name, temp }) {
+// Canvas-rendered tooltip for active/selected location.
+function buildActiveMarkerCanvas({ name, temp }) {
   const t = asFiniteNumber(temp, 0);
   const color = tempColor(t);
-  const tempTxt = escapeXml(tempBadgeText(t));
-  const city = escapeXml(safeCityName(name || 'Selected', 16));
-  // Render at 720x276, display at 120x46 → 6x crisp for sharp WebGL textures
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="276">
-  <rect x="6" y="6" width="708" height="264" rx="84" fill="rgba(10,18,36,0.92)"/>
-  <rect x="6" y="6" width="708" height="264" rx="84" fill="none" stroke="${color}" stroke-width="5" opacity="0.5"/>
-  <text x="360" y="108" text-anchor="middle" font-size="60" font-weight="700" font-family="Inter,Arial,sans-serif" fill="#ffffff" stroke="rgba(0,0,0,0.3)" stroke-width="2" paint-order="stroke">${city}</text>
-  <text x="360" y="210" text-anchor="middle" font-size="90" font-weight="800" font-family="Inter,Arial,sans-serif" fill="${color}" stroke="rgba(0,0,0,0.3)" stroke-width="2" paint-order="stroke">${tempTxt}</text>
-</svg>`;
-  return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
+  const tempTxt = tempBadgeText(t);
+  const city = safeCityName(name || 'Selected', 16);
+  const S = 2;
+  const W = 120 * S, H = 46 * S;
+  const c = document.createElement('canvas');
+  c.width = W; c.height = H;
+  const ctx = c.getContext('2d');
+
+  // Tooltip background
+  ctx.beginPath();
+  ctx.roundRect(2 * S, 2 * S, W - 4 * S, H - 4 * S, 14 * S);
+  ctx.fillStyle = 'rgba(10,18,36,0.92)';
+  ctx.fill();
+  ctx.strokeStyle = color;
+  ctx.globalAlpha = 0.5;
+  ctx.lineWidth = 1.5 * S;
+  ctx.stroke();
+  ctx.globalAlpha = 1;
+
+  // City name
+  ctx.font = `700 ${10 * S}px Inter, Arial, sans-serif`;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = '#ffffff';
+  ctx.fillText(city, W / 2, 15 * S);
+
+  // Temperature
+  ctx.font = `800 ${15 * S}px Inter, Arial, sans-serif`;
+  ctx.fillStyle = color;
+  ctx.fillText(tempTxt, W / 2, 33 * S);
+
+  return c;
 }
 
 function windDir(deg) {
@@ -756,7 +803,7 @@ function markerPointValue(pointOrNumber, axis, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
-function createImageMarker(lat, lon, url, width, height, anchorX, anchorY, zIndex = 1000, visible = true) {
+function createImageMarker(lat, lon, imageSource, width, height, anchorX, anchorY, zIndex = 1000, visible = true) {
   if (!map?.viewer || !window.Cesium) {
     return {
       setMap() {},
@@ -767,20 +814,30 @@ function createImageMarker(lat, lon, url, width, height, anchorX, anchorY, zInde
   const C = window.Cesium;
   let removed = false;
 
-  const toPixelOffset = (w, h, ax, ay) => new C.Cartesian2(-ax, -ay);
+  // If imageSource is a Canvas, use native resolution with scale — no resampling.
+  // If it's a URL string, use explicit width/height as before.
+  const isCanvas = imageSource instanceof HTMLCanvasElement;
+  const billboardOpts = {
+    image: imageSource,
+    horizontalOrigin: C.HorizontalOrigin.LEFT,
+    verticalOrigin: C.VerticalOrigin.TOP,
+    pixelOffset: new C.Cartesian2(-anchorX, -anchorY),
+    eyeOffset: new C.Cartesian3(0, 0, -(zIndex / 10)),
+    disableDepthTestDistance: 0,
+  };
+  if (isCanvas) {
+    // Canvas is rendered at 2x. Scale 0.5 maps canvas pixels 1:1 to screen pixels.
+    // Cesium keeps the full-res texture — no resampling, no blur.
+    billboardOpts.scale = 0.5;
+  } else {
+    billboardOpts.width = width;
+    billboardOpts.height = height;
+  }
+
   const entity = map.viewer.entities.add({
     position: C.Cartesian3.fromDegrees(lon, lat, 0),
     show: !!visible,
-    billboard: {
-      image: url,
-      width,
-      height,
-      horizontalOrigin: C.HorizontalOrigin.LEFT,
-      verticalOrigin: C.VerticalOrigin.TOP,
-      pixelOffset: toPixelOffset(width, height, anchorX, anchorY),
-      eyeOffset: new C.Cartesian3(0, 0, -(zIndex / 10)),
-      disableDepthTestDistance: 0, // depth test ON: hides markers behind the globe
-    },
+    billboard: billboardOpts,
   });
 
   return {
@@ -799,7 +856,7 @@ function createImageMarker(lat, lon, url, width, height, anchorX, anchorY, zInde
     },
     setIcon(iconOpts) {
       if (removed || !entity.billboard) return;
-      const nextUrl = iconOpts?.url || url;
+      const nextUrl = iconOpts?.url || imageSource;
       const nextW = markerSizeValue(iconOpts?.scaledSize, width);
       const nextH = markerSizeValue(iconOpts?.scaledSize?.height, height);
       const nextAx = markerPointValue(iconOpts?.anchor, 'x', anchorX);
@@ -807,7 +864,8 @@ function createImageMarker(lat, lon, url, width, height, anchorX, anchorY, zInde
       entity.billboard.image = nextUrl;
       entity.billboard.width = nextW;
       entity.billboard.height = nextH;
-      entity.billboard.pixelOffset = toPixelOffset(nextW, nextH, nextAx, nextAy);
+      entity.billboard.scale = undefined;
+      entity.billboard.pixelOffset = new C.Cartesian2(-nextAx, -nextAy);
     },
   };
 }
@@ -831,9 +889,9 @@ function renderCityMarkers(results) {
     const iconCode = getMeteoIcon(code, day);
     const temp = asFiniteNumber(w?.main?.temp, 0);
     const show = cityTier <= maxTier;
-    // Glass pill: 96x34, anchored at center-bottom
-    const labelUrl = buildCityLabelDataUrl({ temp });
-    const label = createImageMarker(r.lat, r.lon, labelUrl, 96, 34, 48, 34, 1100, show);
+    // Glass pill: 96x34, anchored at center-bottom (canvas-rendered for crisp text)
+    const labelCanvas = buildCityLabelCanvas({ temp });
+    const label = createImageMarker(r.lat, r.lon, labelCanvas, 96, 34, 48, 34, 1100, show);
 
     // Weather icon: inside the pill, vertically centered with the temp text
     const iconFallback = buildWeatherIconDataUrl(code, day);
@@ -912,12 +970,12 @@ function setActiveMarker(lat, lon, temp, owmCode, day, name) {
   if (!map) return;
   clearActiveMarkers();
   const iconCode = getMeteoIcon(owmCode, day);
-  const labelUrl = buildActiveMarkerDataUrl({
+  const labelCanvas = buildActiveMarkerCanvas({
     name: name || 'Selected',
     temp: asFiniteNumber(temp, 0),
   });
-  // Compact tooltip: 120x46, anchored at center-bottom
-  const label = createImageMarker(lat, lon, labelUrl, 120, 46, 60, 46, 2200, true);
+  // Compact tooltip: 120x46, anchored at center-bottom (canvas-rendered for crisp text)
+  const label = createImageMarker(lat, lon, labelCanvas, 120, 46, 60, 46, 2200, true);
 
   // Weather icon: inside tooltip, left of temperature at same vertical level
   const iconFallback = buildWeatherIconDataUrl(owmCode, day);
