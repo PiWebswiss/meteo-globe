@@ -216,7 +216,7 @@ async def reverse_geocode_brief(lat: float, lon: float, force: bool = False) -> 
             key,
             ttl=24 * 3600,
             headers={"User-Agent": "MeteoGlobe/1.0 (local app)"},
-            params={"lat": lat, "lon": lon, "format": "jsonv2", "addressdetails": 1},
+            params={"lat": lat, "lon": lon, "format": "jsonv2", "addressdetails": 1, "zoom": 14},
             force=force,
         )
         address = data.get("address") if isinstance(data, dict) else {}
@@ -226,9 +226,12 @@ async def reverse_geocode_brief(lat: float, lon: float, force: bool = False) -> 
             address.get("city")
             or address.get("town")
             or address.get("village")
+            or address.get("hamlet")
+            or address.get("suburb")
             or address.get("municipality")
             or address.get("county")
             or address.get("state")
+            or str(data.get("display_name") or "").split(",")[0].strip()
             or str(data.get("name") or "").strip()
             or "Selected location"
         )
