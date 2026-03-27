@@ -347,10 +347,10 @@ function tempBadgeText(c) {
   const n = asFiniteNumber(c, 0);
   if (useFahrenheit) {
     const f = Math.round(n * 9 / 5 + 32);
-    return `${f > 0 ? '+' : ''}${f}F`;
+    return `${f > 0 ? '+' : ''}${f}\u00B0F`;
   }
   const v = Math.round(n);
-  return `${v > 0 ? '+' : ''}${v}C`;
+  return `${v > 0 ? '+' : ''}${v}\u00B0C`;
 }
 
 function buildRoundMarkerDataUrl({ name, temp, active = false, showName = false }) {
@@ -1161,12 +1161,29 @@ function bindMapEventHandlers(nextMap) {
   nextMap.addListener('dragstart', stopRotation);
 }
 
-function createNaturalEarthFallbackProvider(C) {
-  return new C.UrlTemplateImageryProvider({
-    url: `${C.buildModuleUrl('Assets/Textures/NaturalEarthII')}/{z}/{x}/{reverseY}.jpg`,
-    tilingScheme: new C.GeographicTilingScheme(),
-    maximumLevel: 5,
-  });
+async function addBaseImageryLayer(C, viewer) {
+  // Esri World Imagery — free satellite tiles (Google Earth-like appearance)
+  try {
+    const provider = await C.ArcGisMapServerImageryProvider.fromUrl(
+      'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
+    );
+    viewer.imageryLayers.addImageryProvider(provider, 0);
+    return;
+  } catch (_) {}
+  // Fallback: NaturalEarthII bundled with Cesium
+  try {
+    const ne = await C.TileMapServiceImageryProvider.fromUrl(
+      C.buildModuleUrl('Assets/Textures/NaturalEarthII')
+    );
+    viewer.imageryLayers.addImageryProvider(ne, 0);
+    return;
+  } catch (_) {}
+  // Last resort: public OpenStreetMap tiles
+  viewer.imageryLayers.addImageryProvider(new C.UrlTemplateImageryProvider({
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    credit: '(c) OpenStreetMap contributors',
+    maximumLevel: 19,
+  }), 0);
 }
 
 function normalizeTileTemplateForClient(template) {
@@ -1232,7 +1249,6 @@ function initMap() {
   const overlayMinZoomRaw = asFiniteNumber(runtimeConfig?.tile_overlay_min_zoom, 5);
   const overlayMinZoom = Math.max(0, Math.min(18, Math.round(overlayMinZoomRaw)));
   const tileBounds = parseTileBoundsDegrees(runtimeConfig?.tile_bounds);
-  const fallbackProvider = createNaturalEarthFallbackProvider(C);
   const viewer = new C.Viewer(container, {
     animation: false,
     timeline: false,
@@ -1245,34 +1261,52 @@ function initMap() {
     infoBox: false,
     selectionIndicator: false,
     terrainProvider: new C.EllipsoidTerrainProvider(),
-    imageryProvider: fallbackProvider,
+    baseLayer: false,
   });
+  // Dark base color prevents blue flash while satellite imagery loads
+  viewer.scene.globe.baseColor = C.Color.fromCssColorString('#0a1628');
+  // Satellite base layer (Esri World Imagery → NaturalEarthII → public OSM)
+  addBaseImageryLayer(C, viewer);
 
-  const localProviderOpts = {
-    url: tileTemplate,
-    credit: tileAttribution,
-    minimumLevel: tileMinLevel,
-    maximumLevel: 19,
-  };
-  if (tileBounds) {
-    localProviderOpts.rectangle = C.Rectangle.fromDegrees(tileBounds.west, tileBounds.south, tileBounds.east, tileBounds.north);
-  }
-  const localProvider = new C.UrlTemplateImageryProvider(localProviderOpts);
-  const localLayer = viewer.imageryLayers.addImageryProvider(localProvider);
   viewer.scene.globe.enableLighting = true;
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2_000;
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000;
   viewer.scene.screenSpaceCameraController.enableTilt = true;
 
+  // Optional self-hosted tile overlay (only if tile server is configured and reachable)
+  let localLayer = null;
+  if (tileTemplate) {
+    const localProviderOpts = {
+      url: tileTemplate,
+      credit: tileAttribution,
+      minimumLevel: tileMinLevel,
+      maximumLevel: 19,
+    };
+    if (tileBounds) {
+      localProviderOpts.rectangle = C.Rectangle.fromDegrees(tileBounds.west, tileBounds.south, tileBounds.east, tileBounds.north);
+    }
+    const localProvider = new C.UrlTemplateImageryProvider(localProviderOpts);
+    localLayer = viewer.imageryLayers.addImageryProvider(localProvider);
+    localLayer.show = false;
+    // Probe tile server and enable overlay only if reachable
+    probeRootTile(tileTemplate).then((state) => {
+      if (state.ok || state.status === 404) {
+        localLayer.show = true;
+      }
+    });
+  }
+
   map = createCesiumMapAdapter(viewer);
   bindMapEventHandlers(map);
-  const syncLocalLayerVisibility = () => {
-    const z = map?.getZoom ? map.getZoom() : rangeToZoom(getCameraRange(viewer));
-    localLayer.show = z >= overlayMinZoom;
-  };
-  map.addListener('zoom_changed', syncLocalLayerVisibility);
+  if (localLayer) {
+    const syncLocalLayerVisibility = () => {
+      const z = map?.getZoom ? map.getZoom() : rangeToZoom(getCameraRange(viewer));
+      localLayer.show = z >= overlayMinZoom;
+    };
+    map.addListener('zoom_changed', syncLocalLayerVisibility);
+    syncLocalLayerVisibility();
+  }
   focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range);
-  syncLocalLayerVisibility();
 
   if (!mapContextMenuBound) {
     container.addEventListener('contextmenu', (ev) => {
@@ -1282,27 +1316,7 @@ function initMap() {
     mapContextMenuBound = true;
   }
 
-  setText('map-attrib', `3D globe by CesiumJS | tiles ${tileAttribution}`);
-  probeRootTile(tileTemplate).then((state) => {
-    if (state.ok) return;
-    if (state.status === 404) {
-      flashHint(`Regional tile dataset detected. Global fallback stays visible until zoom >= ${overlayMinZoom}.`, 9000);
-      return;
-    }
-    if (tileTemplate.startsWith('/api/tile/')) {
-      if (state.status === 502) {
-        flashHint('Tile proxy cannot reach upstream tiles. Check tileserver service and TILE_UPSTREAM_URL_TEMPLATE.', 9000);
-        return;
-      }
-      flashHint(`Tile proxy error (${state.status || 'network'}). Check tileserver logs/import status.`, 9000);
-      return;
-    }
-    if (state.status > 0) {
-      flashHint(`Tile server returned HTTP ${state.status}. Check tile import/render logs.`, 9000);
-      return;
-    }
-    flashHint('Tile server not reachable from browser. Check TILE_URL_TEMPLATE host/IP and CORS.', 9000);
-  });
+  setText('map-attrib', '3D globe by CesiumJS | Esri World Imagery');
 }
 
 function getCurrentPosition(options) {
