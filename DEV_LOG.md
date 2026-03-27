@@ -154,4 +154,30 @@ I fixed the persistent blue planet issue. The root cause was that `createNatural
 
 I also fixed the temperature labels on globe markers. `tempBadgeText()` was rendering "+23C" without a degree symbol, while the panel's `displayTemp()` correctly showed "23°C". Added the Unicode degree sign (`\u00B0`) to marker SVG temperature badges so they now show "+23°C" consistently. Cache-busting bumped to `app.js?v=nasa3d37`.
 
-I replaced the globe imagery with Esri ArcGIS World Imagery (free satellite tiles) to give a Google Earth-like appearance. The `addBaseImageryLayer()` function now tries providers in order: (1) Esri World Imagery satellite, (2) Cesium NaturalEarthII via TMS, (3) public OpenStreetMap tiles. Self-hosted tiles are now an optional overlay that only activates when the tile server is reachable (probed at startup, hidden until confirmed). The globe base color remains dark `#0a1628` to prevent any blue flash during async imagery loading. Attribution updated to reflect Esri imagery. Cache-busting bumped to `app.js?v=nasa3d38`.
+I replaced the globe imagery with Esri ArcGIS World Imagery (free satellite tiles) to give a Google Earth-like appearance. The `addBaseImageryLayer()` function now tries providers in order: (1) Esri World Imagery satellite, (2) Cesium NaturalEarthII via TMS, (3) public OpenStreetMap tiles. The globe base color remains dark `#0a1628` to prevent any blue flash during async imagery loading. Attribution updated to reflect Esri imagery. Cache-busting bumped to `app.js?v=nasa3d38`.
+
+I removed the self-hosted tile overlay code from `initMap()` entirely (tile template config, tile bounds, probe logic, zoom-based overlay visibility). The app now relies solely on the Esri satellite imagery cascade with NaturalEarthII and public OSM fallbacks.
+
+I redesigned city markers to Google Maps-style labels. City markers are now clean white text with a colored dot and temperature below (no dark bubbles or pill shapes). Active/selected markers use a compact glass card with city name and temperature. Weather icons are positioned next to the label. The old `buildRoundMarkerDataUrl` and `buildNameStripDataUrl` functions were replaced by `buildCityLabelDataUrl` and `buildActiveMarkerDataUrl`.
+
+I added ambient weather animation. The app now saves the user's local weather condition as `ambientWeatherCode` and keeps the weather FX canvas running with that effect even when the panel is closed. When the user selects a different location, FX updates to that weather; when the panel is closed, FX reverts to the user's local weather. If geolocation is unavailable, the app fetches weather for the default home view location as a fallback.
+
+I hid the Cesium Ion credit logo and attribution text via CSS (`.cesium-widget-credits`, `.cesium-credit-logoContainer`, `.cesium-credit-textContainer` set to `display: none`).
+
+I fixed city marker rendering issues. Removed SVG `feDropShadow` filters from marker data URLs (unsupported in Cesium WebGL texture pipeline, caused blank markers). Replaced with `paint-order: stroke` text outlines for legibility. Fixed `eyeOffset` Z sign in `createImageMarker` (was positive, pushing markers behind the globe; now negative to bring them forward). Simplified marker anchor offsets for correct positioning. Weather icons now appear below the city label text. Cache-busting bumped to `app.js?v=nasa3d40`.
+
+I added Esri World Boundaries and Places as a transparent label overlay on top of satellite imagery. This provides Google Maps-style city, village, road, and boundary labels natively on the map, replacing the need for hardcoded city name labels. City weather markers are now compact temperature pills (just temp + weather icon) since the Esri overlay handles place names.
+
+I fixed cities from the other side of the globe showing through the Earth (e.g. Auckland/Sydney visible over Switzerland). Root cause: `disableDepthTestDistance: Number.POSITIVE_INFINITY` disabled depth testing, so all billboards rendered regardless of occlusion. Fix: set `disableDepthTestDistance: 0` so Cesium's depth test hides markers behind the globe surface.
+
+I updated the screensaver to show weather animation while the planet rotates. The screensaver now directly restores ambient weather FX instead of calling `hidePanel()` (which could clear FX). The weather canvas z-index was raised to 55 (above screensaver z-index 50) so weather effects are visible during idle rotation.
+
+Added code comments to new marker functions and key rendering logic. Cache-busting bumped to `app.js?v=nasa3d41`.
+
+I redesigned city weather markers to a modern frosted glass pill style: dark translucent rounded pill with a subtle white border, a colored temperature-accent dot on the left, and the weather icon floating above the pill. Active/selected markers use a sleek glass card with city name, bold colored temperature, and a colored accent bar at the bottom. Cache-busting bumped to `app.js?v=nasa3d42`.
+
+I made the city weather icons larger (36x36, up from 22x22) and repositioned them higher above the temperature pill for better visibility. Cache-busting bumped to `app.js?v=nasa3d43`.
+
+I fixed the forecast panel being stuck on "Loading..." for Swiss locations. Root cause: MeteoSwiss API returned `currentWeather` with all null values, which was truthy in JS, so the frontend skipped the OWM fallback and built an empty forecast list. Fix: added null checks for `currentWeather.time` and `forecast3h/forecast1h` array lengths before using MeteoSwiss data. Cache-busting bumped to `app.js?v=nasa3d44`.
+
+I removed MeteoSwiss integration entirely from the frontend. Removed `fetchSwissPointWeather()`, the MeteoSwiss forecast path in `loadForecast()`, and the MeteoSwiss source labels in `showPanel()`. Forecasts now use OpenWeatherMap directly with Open-Meteo as fallback. I also removed the rotate button (`btn-rotate`) from the UI and its `toggleRotation()` event listener (screensaver auto-rotation still works independently). Cache-busting bumped to `app.js?v=nasa3d45`.

@@ -460,12 +460,17 @@ html, body {
   pointer-events: none;
 }
 
+/* --- Hide Cesium credits/logo ------------------------------------------- */
+.cesium-widget-credits,
+.cesium-credit-logoContainer,
+.cesium-credit-textContainer { display: none !important; }
+
 /* â”€â”€â”€ Weather FX Canvas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #weather-canvas {
   position: fixed;
   inset: 0;
   pointer-events: none;
-  z-index: 4;           /* above globe, below all UI panels */
+  z-index: 55;          /* above globe AND screensaver, below topbar/panels */
   opacity: 0.78;        /* keep terrain/cities readable under weather effects */
   mix-blend-mode: screen;
 }

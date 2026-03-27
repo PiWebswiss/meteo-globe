@@ -41,6 +41,8 @@ let runtimeConfig = null;
 let mapContextMenuBound = false;
 let zoomRenderTimer = null;
 let lastZoomTier = 1;
+let ambientWeatherCode = null;
+let ambientWeatherDay = true;
 let cityPlacemarkMap = new Map(); // name -> {bubble, icon, tier}
 let activeMarkerObjects = [];
 
@@ -353,45 +355,35 @@ function tempBadgeText(c) {
   return `${v > 0 ? '+' : ''}${v}\u00B0C`;
 }
 
-function buildRoundMarkerDataUrl({ name, temp, active = false, showName = false }) {
+// Modern glass pill for city weather markers (4x resolution for crisp text).
+// City/village names come from Esri label overlay, so we only show weather here.
+function buildCityLabelDataUrl({ temp }) {
   const t = asFiniteNumber(temp, 0);
   const color = tempColor(t);
   const tempTxt = escapeXml(tempBadgeText(t));
-  const r = active ? 38 : 34;
-  const by = active ? 64 : 58;
-  const cx = 80;
-  const cy = by - 20;
-  const city = escapeXml(safeCityName(name || (active ? 'Selected' : 'City'), active ? 20 : 16));
-  const nameW = active ? 126 : 110;
-  const nameX = (160 - nameW) / 2;
-  const nameY = active ? 94 : 90;
-  const nameFs = active ? 12 : 11;
-  const namePart = showName
-    ? `<rect x="${nameX}" y="${nameY}" width="${nameW}" height="24" rx="12" ry="12" fill="rgba(6,14,30,0.92)" stroke="rgba(170,205,255,0.62)" stroke-width="1.5"/>
-  <text x="80" y="${nameY + 16}" text-anchor="middle" font-size="${nameFs}" font-weight="700" font-family="Arial, sans-serif" fill="#e5f0ff">${city}</text>`
-    : '';
-  const svg = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 132">
-  <circle cx="${cx}" cy="${cy}" r="${r}" fill="rgba(8,18,38,0.92)" stroke="${color}" stroke-width="4"/>
-  <circle cx="${cx}" cy="${cy}" r="${active ? 22 : 20}" fill="rgba(255,255,255,0.04)" />
-  <rect x="${active ? 44 : 50}" y="${by}" width="${active ? 72 : 60}" height="24" rx="12" ry="12" fill="rgba(8,18,38,0.95)" stroke="${color}" stroke-width="2"/>
-  <text x="80" y="${by + 17}" text-anchor="middle" font-size="13" font-weight="700" font-family="Arial, sans-serif" fill="#ffffff">${tempTxt}</text>
-  ${namePart}
+  // Render at 384x136, display at 96x34 → 4x crisp
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="384" height="136">
+  <rect x="4" y="4" width="376" height="128" rx="64" fill="rgba(15,23,42,0.78)"/>
+  <rect x="4" y="4" width="376" height="128" rx="64" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3"/>
+  <line x1="132" y1="28" x2="132" y2="108" stroke="rgba(255,255,255,0.1)" stroke-width="2"/>
+  <circle cx="68" cy="68" r="16" fill="${color}" opacity="0.3"/>
+  <text x="256" y="86" text-anchor="middle" font-size="52" font-weight="700" font-family="Inter,Arial,sans-serif" fill="#ffffff">${tempTxt}</text>
 </svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
-function buildNameStripDataUrl(name, active = false) {
-  const city = escapeXml(safeCityName(name || (active ? 'Selected' : 'City'), active ? 20 : 16));
-  const w = active ? 126 : 110;
-  const x = (160 - w) / 2;
-  const h = 24;
-  const y = 58;
-  const fs = active ? 12 : 11;
-  const svg = `
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 160 96">
-  <rect x="${x}" y="${y}" width="${w}" height="${h}" rx="12" ry="12" fill="rgba(6,14,30,0.92)" stroke="rgba(170,205,255,0.62)" stroke-width="1.5"/>
-  <text x="80" y="${y + 16}" text-anchor="middle" font-size="${fs}" font-weight="700" font-family="Arial, sans-serif" fill="#e5f0ff">${city}</text>
+// Compact tooltip shown when user clicks/selects a location (4x resolution).
+function buildActiveMarkerDataUrl({ name, temp }) {
+  const t = asFiniteNumber(temp, 0);
+  const color = tempColor(t);
+  const tempTxt = escapeXml(tempBadgeText(t));
+  const city = escapeXml(safeCityName(name || 'Selected', 16));
+  // Render at 480x184, display at 120x46 → 4x crisp
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="184">
+  <rect x="4" y="4" width="472" height="176" rx="56" fill="rgba(15,23,42,0.85)"/>
+  <rect x="4" y="4" width="472" height="176" rx="56" fill="none" stroke="${color}" stroke-width="3" opacity="0.35"/>
+  <text x="240" y="72" text-anchor="middle" font-size="40" font-weight="600" font-family="Inter,Arial,sans-serif" fill="rgba(255,255,255,0.9)">${city}</text>
+  <text x="240" y="140" text-anchor="middle" font-size="60" font-weight="800" font-family="Inter,Arial,sans-serif" fill="${color}">${tempTxt}</text>
 </svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
@@ -445,19 +437,7 @@ async function fetchWeatherAt(lat, lon, force = false) {
   return res.json();
 }
 
-async function fetchSwissPointWeather(lat, lon, force = false) {
-  const res = await fetch(apiPath('/api/meteoswiss/point', { lat, lon, force }));
-  if (!res.ok) throw new Error(await readErrorMessage(res));
-  return res.json();
-}
-
 async function fetchPointWeather(lat, lon, force = false) {
-  if (isOverSwitzerland(lat, lon)) {
-    try {
-      return await fetchSwissPointWeather(lat, lon, force);
-    } catch (_) {
-    }
-  }
   return fetchWeatherAt(lat, lon, force);
 }
 
@@ -490,14 +470,6 @@ function showPanel(data, opts = {}) {
   setText('loc-country', `${data?.sys?.country || ''}`);
   setText('loc-time', localTime(data));
 
-  if (data?._source === 'meteoswiss_point') {
-    const st = data?.ms?.station;
-    const nearest = (typeof st?.distance_km === 'number')
-      ? ` | nearest ${st.abbreviation || st.name || 'station'} (${st.distance_km.toFixed(1)} km)`
-      : '';
-    setText('loc-country', `CH | MeteoSwiss precise${nearest}`);
-    setText('data-source', 'MeteoSwiss CH Point');
-  }
 
   const img = document.getElementById('hero-icon');
   const emo = document.getElementById('hero-emoji');
@@ -537,7 +509,7 @@ function showPanel(data, opts = {}) {
   syncWeatherVisuals(code, day);
 
   if (data.coord) {
-    loadForecast(data.coord.lat, data.coord.lon, data.sys?.country, !!opts.force);
+    loadForecast(data.coord.lat, data.coord.lon, !!opts.force);
   }
 
   if (activeTarget?.lat != null && activeTarget?.lon != null) {
@@ -550,14 +522,19 @@ function showPanel(data, opts = {}) {
 
 function hidePanel() {
   document.getElementById('weather-panel').classList.remove('active');
-  if (weatherFX) weatherFX.clear();
+  // Restore ambient weather FX (user's local weather) instead of clearing
+  if (weatherFX && ambientWeatherCode != null) {
+    weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
+  } else if (weatherFX) {
+    weatherFX.clear();
+  }
   clearActiveMarkers();
   activeMarkerData = null;
   activeTarget = null;
   renderCityMarkers(cityWeatherCache);
 }
 
-async function loadForecast(lat, lon, country, force = false) {
+async function loadForecast(lat, lon, force = false) {
   const scroll = document.getElementById('forecast-scroll');
   scroll.innerHTML = '<div class="forecast-placeholder">Loading forecast...</div>';
   const src = document.getElementById('data-source');
@@ -566,27 +543,11 @@ async function loadForecast(lat, lon, country, force = false) {
     let list = null;
     let source = 'OpenWeatherMap';
 
-    if (country === 'CH') {
-      try {
-        const res = await fetch(apiPath('/api/meteoswiss/forecast', { lat, lon, force }));
-        if (!res.ok) throw new Error(await readErrorMessage(res));
-        const ms = await res.json();
-        if (ms.currentWeather || ms.forecast3h) {
-          list = buildMSForecastList(ms);
-          source = 'MeteoSwiss CH';
-        } else if (ms.list) {
-          list = ms.list;
-        }
-      } catch (_) {}
-    }
-
-    if (!list) {
-      const res = await fetch(apiPath('/api/forecast', { lat, lon, force }));
-      if (!res.ok) throw new Error(await readErrorMessage(res));
-      const data = await res.json();
-      list = data?.list || [];
-      if (data?._source === 'open-meteo') source = 'Open-Meteo';
-    }
+    const res = await fetch(apiPath('/api/forecast', { lat, lon, force }));
+    if (!res.ok) throw new Error(await readErrorMessage(res));
+    const data = await res.json();
+    list = data?.list || [];
+    if (data?._source === 'open-meteo') source = 'Open-Meteo';
 
     src.textContent = source;
     renderForecast(scroll, list);
@@ -824,8 +785,8 @@ function createImageMarker(lat, lon, url, width, height, anchorX, anchorY, zInde
       horizontalOrigin: C.HorizontalOrigin.LEFT,
       verticalOrigin: C.VerticalOrigin.TOP,
       pixelOffset: toPixelOffset(width, height, anchorX, anchorY),
-      eyeOffset: new C.Cartesian3(0, 0, zIndex / 10),
-      disableDepthTestDistance: Number.POSITIVE_INFINITY,
+      eyeOffset: new C.Cartesian3(0, 0, -(zIndex / 10)),
+      disableDepthTestDistance: 0, // depth test ON: hides markers behind the globe
     },
   });
 
@@ -877,20 +838,22 @@ function renderCityMarkers(results) {
     const iconCode = getMeteoIcon(code, day);
     const temp = asFiniteNumber(w?.main?.temp, 0);
     const show = cityTier <= maxTier;
-    const bubbleUrl = buildRoundMarkerDataUrl({ name: r.name, temp, active: false, showName: true });
-    const bubble = createImageMarker(r.lat, r.lon, bubbleUrl, 83, 69, 41, 35, 1100, show);
+    // Glass pill: 96x34, anchored at center-bottom
+    const labelUrl = buildCityLabelDataUrl({ temp });
+    const label = createImageMarker(r.lat, r.lon, labelUrl, 96, 34, 48, 34, 1100, show);
 
+    // Weather icon: floats above the left side of the pill
     const iconFallback = buildWeatherIconDataUrl(code, day);
-    const icon = createImageMarker(r.lat, r.lon, iconFallback, 26, 26, 13, 13, 1200, show);
+    const icon = createImageMarker(r.lat, r.lon, iconFallback, 36, 36, 44, 56, 1200, show);
     resolveWeatherIconSource(iconCode, code, day, (src) => {
       icon.setIcon({
         url: src,
-        scaledSize: { width: 26, height: 26 },
-        anchor: { x: 13, y: 13 },
+        scaledSize: { width: 36, height: 36 },
+        anchor: { x: 44, y: 56 },
       });
     });
 
-    cityPlacemarkMap.set(r.name, { bubble, icon, tier: cityTier });
+    cityPlacemarkMap.set(r.name, { bubble: label, icon, tier: cityTier });
   }
 }
 
@@ -956,24 +919,24 @@ function setActiveMarker(lat, lon, temp, owmCode, day, name) {
   if (!map) return;
   clearActiveMarkers();
   const iconCode = getMeteoIcon(owmCode, day);
-  const bubbleUrl = buildRoundMarkerDataUrl({
+  const labelUrl = buildActiveMarkerDataUrl({
     name: name || 'Selected',
     temp: asFiniteNumber(temp, 0),
-    active: true,
-    showName: true,
   });
-  const bubble = createImageMarker(lat, lon, bubbleUrl, 90, 74, 45, 37, 2200, true);
+  // Compact tooltip: 120x46, anchored at center-bottom
+  const label = createImageMarker(lat, lon, labelUrl, 120, 46, 60, 46, 2200, true);
 
+  // Weather icon: floats above the tooltip
   const iconFallback = buildWeatherIconDataUrl(owmCode, day);
-  const icon = createImageMarker(lat, lon, iconFallback, 30, 30, 15, 15, 2300, true);
+  const icon = createImageMarker(lat, lon, iconFallback, 32, 32, 16, 62, 2300, true);
   resolveWeatherIconSource(iconCode, owmCode, day, (src) => {
     icon.setIcon({
       url: src,
-      scaledSize: { width: 30, height: 30 },
-      anchor: { x: 15, y: 15 },
+      scaledSize: { width: 32, height: 32 },
+      anchor: { x: 16, y: 62 },
     });
   });
-  activeMarkerObjects = [bubble, icon];
+  activeMarkerObjects = [label, icon];
 }
 
 async function onMapPick(lat, lon, source = 'manual') {
@@ -1163,27 +1126,40 @@ function bindMapEventHandlers(nextMap) {
 
 async function addBaseImageryLayer(C, viewer) {
   // Esri World Imagery — free satellite tiles (Google Earth-like appearance)
+  let baseAdded = false;
   try {
     const provider = await C.ArcGisMapServerImageryProvider.fromUrl(
       'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
     );
     viewer.imageryLayers.addImageryProvider(provider, 0);
-    return;
+    baseAdded = true;
   } catch (_) {}
-  // Fallback: NaturalEarthII bundled with Cesium
+  if (!baseAdded) {
+    // Fallback: NaturalEarthII bundled with Cesium
+    try {
+      const ne = await C.TileMapServiceImageryProvider.fromUrl(
+        C.buildModuleUrl('Assets/Textures/NaturalEarthII')
+      );
+      viewer.imageryLayers.addImageryProvider(ne, 0);
+      baseAdded = true;
+    } catch (_) {}
+  }
+  if (!baseAdded) {
+    // Last resort: public OpenStreetMap tiles (includes labels)
+    viewer.imageryLayers.addImageryProvider(new C.UrlTemplateImageryProvider({
+      url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+      credit: '(c) OpenStreetMap contributors',
+      maximumLevel: 19,
+    }), 0);
+    return; // OSM already has labels, skip label overlay
+  }
+  // Add Esri labels overlay (city/village/road names — like Google Maps)
   try {
-    const ne = await C.TileMapServiceImageryProvider.fromUrl(
-      C.buildModuleUrl('Assets/Textures/NaturalEarthII')
+    const labels = await C.ArcGisMapServerImageryProvider.fromUrl(
+      'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer'
     );
-    viewer.imageryLayers.addImageryProvider(ne, 0);
-    return;
+    viewer.imageryLayers.addImageryProvider(labels);
   } catch (_) {}
-  // Last resort: public OpenStreetMap tiles
-  viewer.imageryLayers.addImageryProvider(new C.UrlTemplateImageryProvider({
-    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
-    credit: '(c) OpenStreetMap contributors',
-    maximumLevel: 19,
-  }), 0);
 }
 
 function normalizeTileTemplateForClient(template) {
@@ -1240,15 +1216,6 @@ function initMap() {
   const container = document.getElementById('globe-container');
   container.innerHTML = '';
   const C = window.Cesium;
-  const rawTileTemplate = (runtimeConfig?.tile_url_template || 'https://tile.openstreetmap.org/{z}/{x}/{y}.png').toString().trim();
-  const tileTemplate = normalizeTileTemplateForClient(rawTileTemplate);
-  const tileAttribution = (runtimeConfig?.tile_attribution || '(c) OpenStreetMap contributors').toString().trim();
-  const tileMinLevelRaw = asFiniteNumber(runtimeConfig?.tile_min_level, 0);
-  // Cesium docs warn against high minimumLevel on global rectangles; keep it tiny (0-1).
-  const tileMinLevel = Math.max(0, Math.min(1, Math.round(tileMinLevelRaw)));
-  const overlayMinZoomRaw = asFiniteNumber(runtimeConfig?.tile_overlay_min_zoom, 5);
-  const overlayMinZoom = Math.max(0, Math.min(18, Math.round(overlayMinZoomRaw)));
-  const tileBounds = parseTileBoundsDegrees(runtimeConfig?.tile_bounds);
   const viewer = new C.Viewer(container, {
     animation: false,
     timeline: false,
@@ -1273,39 +1240,8 @@ function initMap() {
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000;
   viewer.scene.screenSpaceCameraController.enableTilt = true;
 
-  // Optional self-hosted tile overlay (only if tile server is configured and reachable)
-  let localLayer = null;
-  if (tileTemplate) {
-    const localProviderOpts = {
-      url: tileTemplate,
-      credit: tileAttribution,
-      minimumLevel: tileMinLevel,
-      maximumLevel: 19,
-    };
-    if (tileBounds) {
-      localProviderOpts.rectangle = C.Rectangle.fromDegrees(tileBounds.west, tileBounds.south, tileBounds.east, tileBounds.north);
-    }
-    const localProvider = new C.UrlTemplateImageryProvider(localProviderOpts);
-    localLayer = viewer.imageryLayers.addImageryProvider(localProvider);
-    localLayer.show = false;
-    // Probe tile server and enable overlay only if reachable
-    probeRootTile(tileTemplate).then((state) => {
-      if (state.ok || state.status === 404) {
-        localLayer.show = true;
-      }
-    });
-  }
-
   map = createCesiumMapAdapter(viewer);
   bindMapEventHandlers(map);
-  if (localLayer) {
-    const syncLocalLayerVisibility = () => {
-      const z = map?.getZoom ? map.getZoom() : rangeToZoom(getCameraRange(viewer));
-      localLayer.show = z >= overlayMinZoom;
-    };
-    map.addListener('zoom_changed', syncLocalLayerVisibility);
-    syncLocalLayerVisibility();
-  }
   focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range);
 
   if (!mapContextMenuBound) {
@@ -1402,6 +1338,10 @@ async function locateAndShowUserWeather({ force = false, animate = true, userIni
 
     panelLoading();
     const data = await fetchPointWeather(lat, lon, force);
+    // Save as ambient weather for persistent FX
+    const w0 = data?.weather?.[0];
+    ambientWeatherCode = Number.isFinite(Number(w0?.id)) ? Number(w0.id) : 800;
+    ambientWeatherDay = isDaytime(data);
     showPanel(data, { target: { lat, lon, source: 'user' }, force });
     setText('loc-country', `${data?.sys?.country || ''} | Your location${acc != null ? ` | GPS +/- ${acc} m` : ''}`);
     flashHint('Live weather updated for your location');
@@ -1413,7 +1353,6 @@ async function locateAndShowUserWeather({ force = false, animate = true, userIni
 function initControls() {
   const zoomInBtn = document.getElementById('btn-zoom-in');
   const zoomOutBtn = document.getElementById('btn-zoom-out');
-  const rotateBtn = document.getElementById('btn-rotate');
   const homeBtn = document.getElementById('btn-home');
   const locateBtn = document.getElementById('btn-locate');
   const refreshBtn = document.getElementById('btn-refresh');
@@ -1428,10 +1367,6 @@ function initControls() {
   if (zoomOutBtn) zoomOutBtn.addEventListener('click', () => {
     stopRotation();
     zoomOut();
-  });
-
-  if (rotateBtn) rotateBtn.addEventListener('click', () => {
-    toggleRotation();
   });
 
   if (homeBtn) homeBtn.addEventListener('click', () => {
@@ -1531,7 +1466,20 @@ async function main() {
 
   if (loading) loading.classList.add('hidden');
 
-  locateAndShowUserWeather({ force: false, animate: true, userInitiated: false });
+  locateAndShowUserWeather({ force: false, animate: true, userInitiated: false })
+    .then(() => {
+      // If ambient weather wasn't set (no geolocation), fetch for default location
+      if (ambientWeatherCode == null) {
+        fetchPointWeather(HOME_VIEW.lat, HOME_VIEW.lon, false).then(data => {
+          const w0 = data?.weather?.[0];
+          ambientWeatherCode = Number.isFinite(Number(w0?.id)) ? Number(w0.id) : 800;
+          ambientWeatherDay = isDaytime(data);
+          if (weatherFX && !activeMarkerData) {
+            weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
+          }
+        }).catch(() => {});
+      }
+    });
   loadCityMarkers();
 }
 
@@ -1554,7 +1502,15 @@ function initScreensaver() {
     updateClock();
     ss.classList.add('active');
     // Go back to Earth view in idle mode, then start a slower rotation.
-    hidePanel();
+    // Close panel but keep/restore ambient weather FX during screensaver
+    document.getElementById('weather-panel').classList.remove('active');
+    clearActiveMarkers();
+    activeMarkerData = null;
+    activeTarget = null;
+    renderCityMarkers(cityWeatherCache);
+    if (weatherFX && ambientWeatherCode != null) {
+      weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
+    }
     focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range);
     if (rotateTimer) stopRotation();
     clearTimeout(spinDelayTimer);
