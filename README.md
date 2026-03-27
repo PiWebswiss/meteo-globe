@@ -57,6 +57,12 @@ docker compose down
 - `docker-compose.yml`: app + self-hosted tile service
 - `docker-compose.tileserver.yml`: optional standalone tile-service compose
 
+## Expose via Cloudflare Tunnel (optional)
+
+To make MeteoGlobe accessible over the internet without port forwarding, use a Cloudflare Tunnel:
+
+Guide: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/
+
 ## Troubleshooting
 
 - Blank globe: verify `http://localhost:8081/tile/0/0/0.png` is reachable, then hard refresh (`Ctrl+F5`).

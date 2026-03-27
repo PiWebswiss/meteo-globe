@@ -21,8 +21,8 @@ const OWM_TO_METEO = {
 
 const CH_BOUNDS = { minLat: 45.8, maxLat: 47.9, minLon: 5.9, maxLon: 10.5 };
 const HOME_VIEW = { lat: 20, lon: 10, range: 12_000_000 };
-const ROTATION_STEP_DEG = 0.08;
-const ROTATION_TICK_MS = 45;
+const ROTATION_STEP_DEG = 0.15;
+const ROTATION_TICK_MS = 30;
 
 let map;
 let weatherFX;
@@ -361,29 +361,28 @@ function buildCityLabelDataUrl({ temp }) {
   const t = asFiniteNumber(temp, 0);
   const color = tempColor(t);
   const tempTxt = escapeXml(tempBadgeText(t));
-  // Render at 384x136, display at 96x34 → 4x crisp
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="384" height="136">
-  <rect x="4" y="4" width="376" height="128" rx="64" fill="rgba(15,23,42,0.78)"/>
-  <rect x="4" y="4" width="376" height="128" rx="64" fill="none" stroke="rgba(255,255,255,0.15)" stroke-width="3"/>
-  <line x1="132" y1="28" x2="132" y2="108" stroke="rgba(255,255,255,0.1)" stroke-width="2"/>
-  <circle cx="68" cy="68" r="16" fill="${color}" opacity="0.3"/>
-  <text x="256" y="86" text-anchor="middle" font-size="52" font-weight="700" font-family="Inter,Arial,sans-serif" fill="#ffffff">${tempTxt}</text>
+  // Render at 576x204, display at 96x34 → 6x crisp for sharp WebGL textures
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="576" height="204">
+  <rect x="6" y="6" width="564" height="192" rx="96" fill="rgba(10,18,36,0.92)"/>
+  <rect x="6" y="6" width="564" height="192" rx="96" fill="none" stroke="rgba(255,255,255,0.22)" stroke-width="5"/>
+  <circle cx="102" cy="102" r="26" fill="${color}" opacity="0.45"/>
+  <text x="348" y="130" text-anchor="middle" font-size="82" font-weight="800" font-family="Inter,Arial,sans-serif" fill="#ffffff" stroke="rgba(0,0,0,0.3)" stroke-width="2" paint-order="stroke">${tempTxt}</text>
 </svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
-// Compact tooltip shown when user clicks/selects a location (4x resolution).
+// Compact tooltip shown when user clicks/selects a location (6x resolution).
 function buildActiveMarkerDataUrl({ name, temp }) {
   const t = asFiniteNumber(temp, 0);
   const color = tempColor(t);
   const tempTxt = escapeXml(tempBadgeText(t));
   const city = escapeXml(safeCityName(name || 'Selected', 16));
-  // Render at 480x184, display at 120x46 → 4x crisp
-  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="480" height="184">
-  <rect x="4" y="4" width="472" height="176" rx="56" fill="rgba(15,23,42,0.85)"/>
-  <rect x="4" y="4" width="472" height="176" rx="56" fill="none" stroke="${color}" stroke-width="3" opacity="0.35"/>
-  <text x="240" y="72" text-anchor="middle" font-size="40" font-weight="600" font-family="Inter,Arial,sans-serif" fill="rgba(255,255,255,0.9)">${city}</text>
-  <text x="240" y="140" text-anchor="middle" font-size="60" font-weight="800" font-family="Inter,Arial,sans-serif" fill="${color}">${tempTxt}</text>
+  // Render at 720x276, display at 120x46 → 6x crisp for sharp WebGL textures
+  const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="720" height="276">
+  <rect x="6" y="6" width="708" height="264" rx="84" fill="rgba(10,18,36,0.92)"/>
+  <rect x="6" y="6" width="708" height="264" rx="84" fill="none" stroke="${color}" stroke-width="5" opacity="0.5"/>
+  <text x="360" y="108" text-anchor="middle" font-size="60" font-weight="700" font-family="Inter,Arial,sans-serif" fill="#ffffff" stroke="rgba(0,0,0,0.3)" stroke-width="2" paint-order="stroke">${city}</text>
+  <text x="360" y="210" text-anchor="middle" font-size="90" font-weight="800" font-family="Inter,Arial,sans-serif" fill="${color}" stroke="rgba(0,0,0,0.3)" stroke-width="2" paint-order="stroke">${tempTxt}</text>
 </svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
@@ -401,10 +400,6 @@ function localTime(data) {
   return `${h}:${m} (local)`;
 }
 
-function sunTime(ts) {
-  if (!ts) return '-';
-  return new Date(ts * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-}
 
 function flashHint(message, duration = 2600) {
   const hint = document.getElementById('hint');
@@ -498,9 +493,6 @@ function showPanel(data, opts = {}) {
   const wd = data?.wind?.deg != null ? ` ${windDir(data.wind.deg)}` : '';
   setText('s-wind', ws != null ? `${ws} km/h${wd}` : '-');
   setText('s-pressure', data?.main?.pressure != null ? `${Math.round(data.main.pressure)} hPa` : '-');
-  setText('s-visibility', data?.visibility ? `${(data.visibility / 1000).toFixed(0)} km` : '-');
-  setText('s-sunrise', sunTime(data?.sys?.sunrise));
-  setText('s-sunset', sunTime(data?.sys?.sunset));
 
   showEl('weather-panel', true);
   activeMarkerData = data;
@@ -696,9 +688,10 @@ function startRotation() {
   if (rotateTimer) return;
   rotateTimer = setInterval(() => {
     if (!map) return;
-    const h = asFiniteNumber(map.getHeading?.(), 0);
-    if (typeof map.setTilt === 'function') map.setTilt(45);
-    if (typeof map.setHeading === 'function') map.setHeading((h - ROTATION_STEP_DEG + 360) % 360);
+    // Spin the globe by shifting camera longitude for visible Earth rotation
+    if (typeof map.rotateLon === 'function') {
+      map.rotateLon(ROTATION_STEP_DEG);
+    }
   }, ROTATION_TICK_MS);
 }
 
@@ -842,14 +835,14 @@ function renderCityMarkers(results) {
     const labelUrl = buildCityLabelDataUrl({ temp });
     const label = createImageMarker(r.lat, r.lon, labelUrl, 96, 34, 48, 34, 1100, show);
 
-    // Weather icon: floats above the left side of the pill
+    // Weather icon: inside the pill, vertically centered with the temp text
     const iconFallback = buildWeatherIconDataUrl(code, day);
-    const icon = createImageMarker(r.lat, r.lon, iconFallback, 36, 36, 44, 56, 1200, show);
+    const icon = createImageMarker(r.lat, r.lon, iconFallback, 22, 22, 42, 28, 1200, show);
     resolveWeatherIconSource(iconCode, code, day, (src) => {
       icon.setIcon({
         url: src,
-        scaledSize: { width: 36, height: 36 },
-        anchor: { x: 44, y: 56 },
+        scaledSize: { width: 22, height: 22 },
+        anchor: { x: 42, y: 28 },
       });
     });
 
@@ -926,14 +919,14 @@ function setActiveMarker(lat, lon, temp, owmCode, day, name) {
   // Compact tooltip: 120x46, anchored at center-bottom
   const label = createImageMarker(lat, lon, labelUrl, 120, 46, 60, 46, 2200, true);
 
-  // Weather icon: floats above the tooltip
+  // Weather icon: inside tooltip, left of temperature at same vertical level
   const iconFallback = buildWeatherIconDataUrl(owmCode, day);
-  const icon = createImageMarker(lat, lon, iconFallback, 32, 32, 16, 62, 2300, true);
+  const icon = createImageMarker(lat, lon, iconFallback, 22, 22, 52, 23, 2300, true);
   resolveWeatherIconSource(iconCode, owmCode, day, (src) => {
     icon.setIcon({
       url: src,
-      scaledSize: { width: 32, height: 32 },
-      anchor: { x: 16, y: 62 },
+      scaledSize: { width: 22, height: 22 },
+      anchor: { x: 52, y: 23 },
     });
   });
   activeMarkerObjects = [label, icon];
@@ -1107,6 +1100,11 @@ function createCesiumMapAdapter(viewer) {
     setTilt(deg) {
       const c = getCameraCenter(viewer);
       setCameraView(viewer, c.lat, c.lon, getCameraRange(viewer), null, deg);
+    },
+    // Smooth globe spin using Cesium's camera.rotate (no jumps)
+    rotateLon(stepDeg) {
+      if (!viewer?.camera) return;
+      viewer.camera.rotate(C.Cartesian3.UNIT_Z, C.Math.toRadians(stepDeg));
     },
   };
 }
@@ -1501,7 +1499,11 @@ function initScreensaver() {
   function showScreensaver() {
     updateClock();
     ss.classList.add('active');
-    // Go back to Earth view in idle mode, then start a slower rotation.
+    // Hide UI elements for clean screensaver look
+    document.querySelector('.topbar')?.classList.add('ss-hidden');
+    document.querySelector('.controls')?.classList.add('ss-hidden');
+    document.getElementById('hint')?.classList.add('ss-hidden');
+    document.getElementById('map-attrib')?.classList.add('ss-hidden');
     // Close panel but keep/restore ambient weather FX during screensaver
     document.getElementById('weather-panel').classList.remove('active');
     clearActiveMarkers();
@@ -1511,18 +1513,31 @@ function initScreensaver() {
     if (weatherFX && ambientWeatherCode != null) {
       weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
     }
-    focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range);
+    // Hide city markers for clean screensaver look
+    for (const { bubble, icon } of cityPlacemarkMap.values()) {
+      if (bubble?.setVisible) bubble.setVisible(false);
+      if (icon?.setVisible) icon.setVisible(false);
+    }
+    // Zoom out for a full-globe spinning view
+    focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range * 1.5);
     if (rotateTimer) stopRotation();
     clearTimeout(spinDelayTimer);
     spinDelayTimer = setTimeout(() => {
       if (!ss.classList.contains('active')) return;
       startRotation();
       screensaverStartedRotation = true;
-    }, 450);
+    }, 600);
   }
 
   function dismissScreensaver() {
     ss.classList.remove('active');
+    // Restore UI elements
+    document.querySelector('.topbar')?.classList.remove('ss-hidden');
+    document.querySelector('.controls')?.classList.remove('ss-hidden');
+    document.getElementById('hint')?.classList.remove('ss-hidden');
+    document.getElementById('map-attrib')?.classList.remove('ss-hidden');
+    // Restore city markers
+    updateCityTierVisibility();
     clearTimeout(spinDelayTimer);
     if (screensaverStartedRotation) {
       stopRotation();

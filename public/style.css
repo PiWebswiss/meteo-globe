@@ -412,6 +412,12 @@ html, body {
   opacity: 1;
   pointer-events: none;       /* do not block controls/buttons */
 }
+/* Hide UI elements during screensaver for clean globe view */
+.ss-hidden {
+  opacity: 0 !important;
+  pointer-events: none !important;
+  transition: opacity 0.6s ease !important;
+}
 .ss-card {
   min-width: min(88vw, 420px);
   padding: 28px 36px 24px;
