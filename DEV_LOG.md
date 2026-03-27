@@ -202,3 +202,72 @@ I upgraded marker SVGs from 4x to 6x resolution for even crisper text in WebGL. 
 I repositioned weather icons to sit inside the marker pills at the same vertical level as the temperature text, instead of floating above. City pill icons are 22x22 centered on the left dot area, active tooltip icons are 22x22 positioned left of the temperature line. Also made pill backgrounds more opaque (0.92), text bolder (weight 800) with subtle dark stroke outlines for better contrast and readability. Cache-busting bumped to `app.js?v=nasa3d51`.
 
 I replaced SVG data URL markers with Canvas-rendered textures to fix persistent pixelated text. SVG data URLs get rasterized at native size then resampled by Cesium's WebGL pipeline, causing blur. Canvas rendering uses the browser's native font rasterizer with proper sub-pixel anti-aliasing. The canvas is rendered at exactly 2x display size (192x68 for 96x34 pill, 240x92 for 120x46 tooltip) with `billboard.scale = 0.5`, so Cesium maps canvas pixels 1:1 to screen pixels without resampling. The previous approach of rendering at 4-6x with explicit `width`/`height` forced Cesium to resample the texture down, destroying text quality. Cache-busting bumped to `app.js?v=nasa3d54`.
+
+I optimized and cleaned up `public/app.js`:
+- Reduced screensaver zoom from `HOME_VIEW.range * 0.4` (too close) to `HOME_VIEW.range * 0.65` (~7.8M m) for a better compromise between showing weather markers and keeping a cinematic globe view.
+- Removed dead tile-overlay code: `normalizeTileTemplateForClient()`, `parseTileBoundsDegrees()`, `renderTemplateTileUrl()`, `probeRootTile()` — all unused since tile overlay was removed in favor of Esri satellite imagery.
+- Removed unused `loadRuntimeConfig()` function and `runtimeConfig` variable — the frontend no longer reads `/api/config` since tile overlay removal.
+- Simplified `fetchPointWeather` from a redundant wrapper function to a `const` alias of `fetchWeatherAt`.
+- Simplified `normalizeLon()` from a while-loop approach to a single modulo expression.
+- Net result: ~67 lines removed, no functional changes beyond the screensaver zoom adjustment.
+
+### README install guide
+
+Added a complete step-by-step install guide to `README.md` covering Docker installation on Raspberry Pi / Debian (GPG key, apt repo, package install, user group setup), git clone, and `docker compose up`. This replaces the previous single-line Docker link.
+
+### Screensaver improvements
+
+- Slowed globe rotation from 0.15°/tick to 0.04°/tick (~4x slower) for a more cinematic feel.
+- City weather markers now stay visible during screensaver (previously hidden).
+- Weather FX canvas (clouds/rain overlay) is fully hidden during screensaver via `ss-hidden` class with `visibility: hidden` for a clean view.
+- Screensaver zoom adjusted to `HOME_VIEW.range * 0.4` for a closer globe view showing weather markers clearly.
+
+### Startup weather loading
+
+Weather FX (ambient effects like rain/clouds) now loads immediately at startup by fetching weather for the default HOME_VIEW location, without waiting for browser geolocation. Geolocation still runs after and overrides if permission is granted. The weather panel does NOT open automatically — only the ambient FX are set.
+
+### Reverse geocoding fix (Nominatim 429 rate-limiting)
+
+Root cause of "Selected location" instead of city names: Nominatim was returning HTTP 429 (Too Many Requests). Fix:
+- Added a Nominatim rate-limiter (`_nominatim_lock` + `_nominatim_last_call`) ensuring max 1 request per 1.1 seconds.
+- Extracted `_extract_place_name()` helper so both fresh and cached Nominatim responses are parsed consistently (previously the cache-hit path only checked `data.name` instead of the full address hierarchy).
+- Added `Accept-Language: en` header to all Nominatim requests so place names are always returned in English.
+- Added logging for geocode failures.
+
+### City weather performance fix
+
+The `/api/cities` endpoint was calling `reverse_geocode_brief()` for every city (~90), each waiting 1.1s in the Nominatim rate-limiter queue. Fix: added `place_name_override` parameter to `weather_payload()` so the cities endpoint passes the known city name directly and skips Nominatim entirely. City weather now loads in seconds instead of minutes.
+
+### Satellite tile disk caching
+
+Added a new endpoint `/api/sat/{layer}/{z}/{x}/{y}` that proxies Esri World Imagery and World Boundaries tiles with persistent disk caching:
+- First request fetches from Esri and saves the tile as a PNG file under `tile_cache/{layer}/{z}/{x}/{y}.png`.
+- Subsequent requests serve the file directly from disk — same quality, zero external API calls.
+- Frontend updated to route satellite and label imagery through this local proxy instead of calling Esri directly.
+- Docker volume `sat-tiles` added to `docker-compose.yml` so the tile cache persists across container restarts.
+- Max zoom capped at 17 to avoid excessive tile counts at very high zoom levels.
+
+### Aggressive caching strategy
+
+Increased cache TTLs across the entire stack to reduce API calls:
+
+**Server-side (in-memory):**
+- Current weather: 10 min → 15 min (weather doesn't change that fast)
+- Forecast: 10 min → 30 min (forecasts change even slower)
+- Reverse geocode (Nominatim): 24h → 30 days (place names don't move)
+- Geocode search (Nominatim): 1h → 7 days (search results are stable)
+
+**Browser-side (Cache-Control headers):**
+- Map tiles (OSM proxy): 1h → 7 days
+- Satellite/label tiles: 7 days (new)
+- Weather icons: 1 day → 30 days (icons never change)
+- Static assets (images, fonts): 1h → 30 days
+- HTML/JS/CSS: kept at no-store for development
+
+### Server code documentation
+
+Added comprehensive comments and docstrings to `server.py`:
+- Module-level docstring explaining the server's role
+- Section headers separating logical blocks (helpers, config, caches, external APIs, geocoding, weather assembly, FastAPI setup, routes)
+- Docstrings on every function and API route
+- Inline comments on configuration variables explaining their purpose

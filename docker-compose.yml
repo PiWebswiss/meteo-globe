@@ -38,7 +38,10 @@ services:
     volumes:
       # Live-reload the public/ folder without rebuilding the image
       - ./public:/app/public:ro
+      # Persistent disk cache for satellite/label tiles (avoids re-fetching from Esri)
+      - sat-tiles:/app/tile_cache
 
 volumes:
   osm-data:
   osm-tiles:
+  sat-tiles:

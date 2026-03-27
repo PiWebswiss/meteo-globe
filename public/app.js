@@ -36,7 +36,6 @@ let searchTimer = null;
 let hintTimer = null;
 let cityRetryTimer = null;
 let cesiumLoadPromise = null;
-let runtimeConfig = null;
 let mapContextMenuBound = false;
 let zoomRenderTimer = null;
 let lastZoomTier = 1;
@@ -226,17 +225,6 @@ async function ensureCesiumLoaded() {
   } catch (_) {
   }
   return !!window.Cesium?.Viewer;
-}
-
-async function loadRuntimeConfig() {
-  if (runtimeConfig) return runtimeConfig;
-  let cfg = null;
-  try {
-    const res = await fetch('/api/config', { cache: 'no-store' });
-    if (res.ok) cfg = await res.json();
-  } catch (_) {}
-  runtimeConfig = cfg || {};
-  return runtimeConfig;
 }
 
 function setText(id, text) {
@@ -473,9 +461,8 @@ async function fetchWeatherAt(lat, lon, force = false) {
   return res.json();
 }
 
-async function fetchPointWeather(lat, lon, force = false) {
-  return fetchWeatherAt(lat, lon, force);
-}
+// fetchPointWeather is an alias kept for call-site readability
+const fetchPointWeather = fetchWeatherAt;
 
 function panelLoading() {
   setText('loc-city', 'Fetching...');
@@ -970,10 +957,7 @@ async function onMapPick(lat, lon, source = 'manual') {
 }
 
 function normalizeLon(lon) {
-  let out = lon;
-  while (out < -180) out += 360;
-  while (out > 180) out -= 360;
-  return out;
+  return ((lon % 360) + 540) % 360 - 180;
 }
 
 function getCameraRange(viewer) {
@@ -1147,12 +1131,14 @@ function bindMapEventHandlers(nextMap) {
 }
 
 async function addBaseImageryLayer(C, viewer) {
-  // Esri World Imagery — free satellite tiles (Google Earth-like appearance)
+  // Esri World Imagery via local caching proxy (tiles stored on Pi after first fetch)
   let baseAdded = false;
   try {
-    const provider = await C.ArcGisMapServerImageryProvider.fromUrl(
-      'https://services.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer'
-    );
+    const provider = new C.UrlTemplateImageryProvider({
+      url: '/api/sat/imagery/{z}/{x}/{y}',
+      credit: 'Esri World Imagery',
+      maximumLevel: 17,
+    });
     viewer.imageryLayers.addImageryProvider(provider, 0);
     baseAdded = true;
   } catch (_) {}
@@ -1175,64 +1161,17 @@ async function addBaseImageryLayer(C, viewer) {
     }), 0);
     return; // OSM already has labels, skip label overlay
   }
-  // Add Esri labels overlay (city/village/road names — like Google Maps)
+  // Esri labels overlay via local caching proxy
   try {
-    const labels = await C.ArcGisMapServerImageryProvider.fromUrl(
-      'https://services.arcgisonline.com/ArcGIS/rest/services/Reference/World_Boundaries_and_Places/MapServer'
-    );
+    const labels = new C.UrlTemplateImageryProvider({
+      url: '/api/sat/labels/{z}/{x}/{y}',
+      credit: 'Esri Reference',
+      maximumLevel: 17,
+    });
     viewer.imageryLayers.addImageryProvider(labels);
   } catch (_) {}
 }
 
-function normalizeTileTemplateForClient(template) {
-  const raw = (template || '').toString().trim();
-  if (!raw) return raw;
-  if (raw.startsWith('/')) return raw;
-  try {
-    const u = new URL(raw, window.location.href);
-    const localHosts = new Set(['localhost', '127.0.0.1', '::1']);
-    if (!localHosts.has(u.hostname)) return u.toString();
-    const pageHost = (window.location.hostname || '').trim();
-    if (!pageHost || localHosts.has(pageHost)) return u.toString();
-    u.hostname = pageHost;
-    return u.toString();
-  } catch (_) {
-    return raw;
-  }
-}
-
-function parseTileBoundsDegrees(raw) {
-  const s = (raw || '').toString().trim();
-  if (!s) return null;
-  const parts = s.split(',').map(v => Number(v.trim()));
-  if (parts.length !== 4 || parts.some(v => !Number.isFinite(v))) return null;
-  const [west, south, east, north] = parts;
-  if (west < -180 || west > 180 || east < -180 || east > 180) return null;
-  if (south < -90 || south > 90 || north < -90 || north > 90) return null;
-  if (east <= west || north <= south) return null;
-  return { west, south, east, north };
-}
-
-function renderTemplateTileUrl(template, z = 0, x = 0, y = 0) {
-  const maxIndex = (2 ** z) - 1;
-  const reverseY = maxIndex - y;
-  return template
-    .replace(/\{z\}/g, String(z))
-    .replace(/\{x\}/g, String(x))
-    .replace(/\{y\}/g, String(y))
-    .replace(/\{reverseY\}/g, String(reverseY))
-    .replace(/\{s\}/g, 'a');
-}
-
-async function probeRootTile(template) {
-  try {
-    const u = renderTemplateTileUrl(template, 0, 0, 0);
-    const res = await fetch(u, { method: 'GET', cache: 'no-store' });
-    return { ok: res.ok, status: res.status };
-  } catch (err) {
-    return { ok: false, status: 0, error: err };
-  }
-}
 
 function initMap() {
   const container = document.getElementById('globe-container');
@@ -1478,7 +1417,6 @@ async function main() {
     return;
   }
 
-  await loadRuntimeConfig();
   initMap();
   initSearch();
   initControls();
@@ -1531,13 +1469,13 @@ function initScreensaver() {
     activeMarkerData = null;
     activeTarget = null;
     renderCityMarkers(cityWeatherCache);
-    if (weatherFX && ambientWeatherCode != null) {
-      weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
-    }
+    // Hide weather FX canvas entirely for a clean screensaver
+    if (weatherFX) weatherFX.clear();
+    document.getElementById('weather-canvas')?.classList.add('ss-hidden');
     // Keep city markers visible during screensaver to show weather on earth
     updateCityTierVisibility();
-    // Zoom to a nice globe view — close enough to see weather markers
-    focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range * 0.7);
+    // Zoom closer to the globe so weather markers are clearly visible
+    focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range * 0.65);
     if (rotateTimer) stopRotation();
     clearTimeout(spinDelayTimer);
     spinDelayTimer = setTimeout(() => {
@@ -1554,6 +1492,11 @@ function initScreensaver() {
     document.querySelector('.controls')?.classList.remove('ss-hidden');
     document.getElementById('hint')?.classList.remove('ss-hidden');
     document.getElementById('map-attrib')?.classList.remove('ss-hidden');
+    document.getElementById('weather-canvas')?.classList.remove('ss-hidden');
+    // Restore ambient weather FX
+    if (weatherFX && ambientWeatherCode != null) {
+      weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
+    }
     // Restore city markers
     updateCityTierVisibility();
     clearTimeout(spinDelayTimer);
