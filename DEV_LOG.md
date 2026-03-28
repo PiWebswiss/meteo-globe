@@ -2,6 +2,17 @@
 
 ## 2026-03-28
 
+### Icon and text rendering fixes
+
+I fixed blurry icons and text across the app:
+
+- **Hero and forecast icons now render as inline SVG** instead of `<img>` tags. Browsers rasterize SVGs inside `<img>` at their intrinsic size (40x40 in our case), causing blur when scaled up. Using `fetch()` + `innerHTML` injects the SVG directly into the DOM so it renders crisply at any CSS size.
+- **Server icon endpoint simplified to SVG-only.** Removed PNG fallback from `/api/icon/{code}` since all icons are now SVGs. This avoids stale PNG data in the in-memory `_icon_cache`.
+- **Canvas marker resolution increased.** Globe marker canvases now render at `1.5× devicePixelRatio` (minimum 3x) instead of hardcoded 2x, and billboard scale uses `1/S` to match. This produces sharper temperature text in Cesium's WebGL pipeline.
+- **CSS text rendering improved.** Added `-moz-osx-font-smoothing: grayscale`, `text-rendering: optimizeLegibility` globally, `shape-rendering: geometricPrecision` on all SVG icons, and `image-rendering: -webkit-optimize-contrast` on the temperature chart canvas.
+- **CSS updated for inline SVGs.** All selectors targeting `img` in `.hero-icon-wrap`, `.fc-icon`, and `.marker-bubble` now also target `svg` so inline icons get correct dimensions at all responsive breakpoints.
+- **Cache busters bumped** to `?v=svg-icons-1` on both `app.js` and `style.css` to force browsers to load the updated files.
+
 I removed weather animations entirely. Deleted `weather-fx.js` and `local-weather-3d.js`, removed the `<canvas id="weather-canvas">` from HTML, and cleaned all `weatherFX`, `ambientWeatherCode`, `ambientWeatherDay`, `initWeatherFX()`, `syncWeatherVisuals()` references from `app.js`. Removed related CSS (`#weather-canvas`) and all animation mentions from the DEV_LOG.
 
 I removed dead code: unused `normalizeSearchText()` function, unused `toggleRotation()` function, orphan `btn-rotate` DOM reference in `stopRotation()`, unused `import math` in `server.py`, and dead `.station-marker` CSS classes from the old MeteoSwiss integration.
