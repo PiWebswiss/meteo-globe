@@ -2,6 +2,12 @@
 
 Interactive 3D weather globe powered by Open-Meteo (free, no API key needed).
 
+Live demo: https://meteoglobe.piweb.ch/
+
+![Globe overview](docs/screenshot-globe.png)
+
+![Weather detail panel](docs/screenshot-detail.png)
+
 ## Install
 
 ### 1. Install Docker (Raspberry Pi / Debian)

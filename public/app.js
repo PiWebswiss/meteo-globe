@@ -448,11 +448,12 @@ function buildCityLabelCanvas({ temp, iconImg }) {
   const tv = asFiniteNumber(temp, 0);
   const color = tempColor(tv);
   const tempTxt = tempBadgeText(tv);
-  const S = Math.max(3, Math.ceil((window.devicePixelRatio || 2) * 1.5));
+  const S = 2;
   const W = 96 * S, H = 34 * S;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
 
   // Pill background
   ctx.beginPath();
@@ -502,11 +503,12 @@ function buildActiveMarkerCanvas({ name, temp, iconImg }) {
   const color = tempColor(tv);
   const tempTxt = tempBadgeText(tv);
   const city = safeCityName(name || t('selected'), 16);
-  const S = Math.max(3, Math.ceil((window.devicePixelRatio || 2) * 1.5));
+  const S = 2;
   const W = 130 * S, H = 46 * S;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
+  ctx.clearRect(0, 0, W, H);
 
   // Tooltip background
   ctx.beginPath();
@@ -1154,9 +1156,8 @@ function createImageMarker(lat, lon, imageSource, width, height, anchorX, anchor
     disableDepthTestDistance: 0,
   };
   if (isCanvas) {
-    // Canvas is rendered at higher res for sharp text. Scale down to logical size.
-    const S = Math.max(3, Math.ceil((window.devicePixelRatio || 2) * 1.5));
-    billboardOpts.scale = 1 / S;
+    // Canvas is rendered at 2x. Scale 0.5 maps canvas pixels 1:1 to screen pixels.
+    billboardOpts.scale = 0.5;
   } else {
     billboardOpts.width = width;
     billboardOpts.height = height;
@@ -1188,10 +1189,9 @@ function createImageMarker(lat, lon, imageSource, width, height, anchorX, anchor
       const nextAx = markerPointValue(iconOpts?.anchor, 'x', anchorX);
       const nextAy = markerPointValue(iconOpts?.anchor?.y, 'y', anchorY);
       entity.billboard.image = nextImg;
-      // Canvas images use scale=1/S for sharp rendering; URL images use explicit width/height
+      // Canvas images use scale=0.5 for 2x rendering; URL images use explicit width/height
       if (nextImg instanceof HTMLCanvasElement) {
-        const S = Math.max(3, Math.ceil((window.devicePixelRatio || 2) * 1.5));
-        entity.billboard.scale = 1 / S;
+        entity.billboard.scale = 0.5;
         entity.billboard.width = undefined;
         entity.billboard.height = undefined;
       } else {
