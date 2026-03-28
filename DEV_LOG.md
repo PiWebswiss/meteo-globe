@@ -2,6 +2,8 @@
 
 ## 2026-03-28
 
+Current live setup: https://meteoglobe.piweb.ch/
+
 ### Icon and text rendering fixes
 
 I fixed blurry icons and text across the app:
