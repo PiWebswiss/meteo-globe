@@ -10,7 +10,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import math
 import os
 import time
 from contextlib import asynccontextmanager
@@ -192,20 +191,43 @@ def open_meteo_code_to_owm(code: Any) -> int:
 
 
 def build_open_meteo_forecast(payload: dict[str, Any]) -> dict[str, Any]:
-    """Convert Open-Meteo hourly forecast into a simplified list (every 3h, up to 16 slots)."""
+    """Convert Open-Meteo hourly forecast into a simplified list (every 3h, up to 16 slots).
+    Also returns an 'hourly' array with every hour's data for the temperature/rain chart."""
     hourly = payload.get("hourly") if isinstance(payload, dict) else None
     if not isinstance(hourly, dict):
-        return {"list": [], "_source": "open-meteo"}
+        return {"list": [], "hourly": [], "_source": "open-meteo"}
 
     times = hourly.get("time") if isinstance(hourly.get("time"), list) else []
     temps = hourly.get("temperature_2m") if isinstance(hourly.get("temperature_2m"), list) else []
     probs = hourly.get("precipitation_probability") if isinstance(hourly.get("precipitation_probability"), list) else []
+    precip = hourly.get("precipitation") if isinstance(hourly.get("precipitation"), list) else []
     codes = hourly.get("weather_code") if isinstance(hourly.get("weather_code"), list) else []
-    n = min(len(times), len(temps), len(probs), len(codes))
+    n = min(len(times), len(temps), len(codes))
     if n == 0:
-        return {"list": [], "_source": "open-meteo"}
+        return {"list": [], "hourly": [], "_source": "open-meteo"}
+
+    # UTC offset from Open-Meteo (seconds) — used by frontend to interpret local times
+    utc_offset = as_int(payload.get("utc_offset_seconds")) or 0
 
     now_ts = int(time.time())
+
+    # Build hourly array for the chart (local ISO times from Open-Meteo with timezone:auto)
+    hourly_data: list[dict[str, Any]] = []
+    for i in range(n):
+        t = times[i] if i < len(times) else None
+        if not isinstance(t, str):
+            continue
+        entry: dict[str, Any] = {
+            "time": t,  # local ISO string e.g. "2026-03-28T14:00"
+            "temp": as_float(temps[i]) if i < len(temps) else 0.0,
+            "precip": as_float(precip[i]) if i < len(precip) else 0.0,
+            "pop": as_float(probs[i]) if i < len(probs) else 0.0,
+        }
+        hourly_data.append(entry)
+        if len(hourly_data) >= 48:
+            break
+
+    # Build 3-hourly forecast cards (for the scrollable forecast row)
     out: list[dict[str, Any]] = []
     for i in range(n):
         if i % 3 != 0:
@@ -224,7 +246,26 @@ def build_open_meteo_forecast(payload: dict[str, Any]) -> dict[str, Any]:
         if len(out) >= 16:
             break
 
-    return {"list": out, "_source": "open-meteo"}
+    # Build 7-day daily forecast
+    daily_raw = payload.get("daily") if isinstance(payload, dict) else None
+    daily_out: list[dict[str, Any]] = []
+    if isinstance(daily_raw, dict):
+        d_times = daily_raw.get("time", [])
+        d_tmax = daily_raw.get("temperature_2m_max", [])
+        d_tmin = daily_raw.get("temperature_2m_min", [])
+        d_precip = daily_raw.get("precipitation_sum", [])
+        d_codes = daily_raw.get("weather_code", [])
+        d_n = min(len(d_times), len(d_tmax), len(d_tmin), len(d_codes))
+        for i in range(d_n):
+            daily_out.append({
+                "date": d_times[i],  # "2026-03-28"
+                "temp_max": as_float(d_tmax[i]) or 0.0,
+                "temp_min": as_float(d_tmin[i]) or 0.0,
+                "precip": as_float(d_precip[i]) if i < len(d_precip) else 0.0,
+                "code": open_meteo_code_to_owm(d_codes[i]),
+            })
+
+    return {"list": out, "hourly": hourly_data, "daily": daily_out, "utc_offset": utc_offset, "_source": "open-meteo"}
 
 
 # ---------------------------------------------------------------------------
@@ -518,9 +559,10 @@ async def forecast(lat: float, lon: float, force: bool = False):
         params={
             "latitude": lat,
             "longitude": lon,
-            "hourly": "temperature_2m,precipitation_probability,weather_code",
-            "forecast_days": 3,
-            "timezone": "UTC",
+            "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
+            "forecast_days": 7,
+            "timezone": "auto",
         },
         force=force,
     )

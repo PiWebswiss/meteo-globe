@@ -145,7 +145,17 @@ html, body {
 .sr-flag { font-size: 20px; }
 .no-results { padding: 16px; text-align: center; color: var(--text-dim); font-size: 13px; }
 
-.topbar-right { flex-shrink: 0; }
+.topbar-right { flex-shrink: 0; display: flex; gap: 6px; align-items: center; }
+.lang-toggle {
+  font-size: 12px; font-weight: 700; cursor: pointer;
+  padding: 6px 12px; border-radius: 99px;
+  background: rgba(255,255,255,0.08);
+  border: 1px solid rgba(255,255,255,0.15);
+  color: var(--text-dim); transition: background var(--trans), border-color var(--trans), transform 0.15s;
+  user-select: none; letter-spacing: .04em;
+}
+.lang-toggle:hover { background: rgba(255,255,255,0.14); border-color: rgba(255,255,255,0.25); transform: scale(1.04); }
+.lang-toggle:active { transform: scale(0.96); }
 .unit-toggle {
   font-size: 14px; font-weight: 700; cursor: pointer;
   padding: 7px 16px; border-radius: 99px;
@@ -170,7 +180,7 @@ html, body {
   box-shadow: var(--shadow);
   transition: left var(--trans);
   display: flex; flex-direction: column;
-  overflow: hidden;
+  overflow-y: auto; overflow-x: hidden;
 }
 #weather-panel.active { left: 16px; }
 #weather-panel::before {
@@ -208,11 +218,13 @@ html, body {
   padding: 16px 20px;
 }
 .hero-icon-wrap {
-  width: 88px; height: 88px; flex-shrink: 0;
+  width: 64px; height: 64px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
 }
 .hero-icon-wrap img {
-  width: 88px; height: 88px; object-fit: contain;
+  width: 64px; height: 64px; object-fit: contain;
+  image-rendering: -webkit-optimize-contrast;
+  image-rendering: crisp-edges;
   filter: drop-shadow(0 4px 20px rgba(45,140,240,0.4));
 }
 .hero-emoji { font-size: 60px; line-height: 1; }
@@ -227,22 +239,19 @@ html, body {
 }
 .hero-feels { font-size: 12px; color: var(--text-dimmer); margin-top: 4px; }
 
-/* Stats */
-.panel-stats {
-  display: grid; grid-template-columns: 1fr 1fr 1fr;
-  gap: 1px; margin: 12px 16px 0;
-  background: var(--glass-border);
-  border-radius: 14px; overflow: hidden;
-}
-.stat-item {
+/* Temperature + precipitation chart (MeteoSuisse style) */
+.temp-chart-wrap {
+  margin: 10px 16px 0;
+  border-radius: 14px;
+  overflow: hidden;
   background: rgba(255,255,255,0.03);
-  padding: 11px 8px; text-align: center;
-  transition: background var(--trans);
+  border: 1px solid var(--glass-border);
 }
-.stat-item:hover { background: rgba(255,255,255,0.07); }
-.stat-icon { font-size: 15px; margin-bottom: 3px; }
-.stat-lbl { font-size: 9px; color: var(--text-dimmer); letter-spacing: .05em; text-transform: uppercase; margin-bottom: 2px; }
-.stat-val { font-size: 12px; font-weight: 600; color: var(--text); }
+.temp-chart-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 150px;
+}
 
 /* Forecast */
 .panel-forecast {
@@ -278,8 +287,9 @@ html, body {
 .fc-icon { height: 36px; display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
 .fc-icon img { width: 36px; height: 36px; object-fit: contain; }
 .fc-icon span { font-size: 28px; line-height: 1; }
-.fc-temp { font-size: 14px; font-weight: 700; }
-.fc-rain { font-size: 10px; color: #5ab4ff; margin-top: 2px; min-height: 14px; }
+.fc-temp { font-size: 14px; font-weight: 700; display: flex; gap: 4px; justify-content: center; align-items: baseline; }
+.fc-temp-min { font-size: 11px; font-weight: 500; opacity: 0.6; }
+.fc-rain { font-size: 9px; color: #5ab4ff; margin-top: 2px; min-height: 14px; }
 
 .forecast-placeholder {
   display: flex; align-items: center; justify-content: center;
@@ -472,71 +482,125 @@ html, body {
 .cesium-credit-logoContainer,
 .cesium-credit-textContainer { display: none !important; }
 
-/* â”€â”€â”€ Weather FX Canvas â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-#weather-canvas {
-  position: fixed;
-  inset: 0;
-  pointer-events: none;
-  z-index: 55;          /* above globe AND screensaver, below topbar/panels */
-  opacity: 0.78;        /* keep terrain/cities readable under weather effects */
-  mix-blend-mode: screen;
-}
-
-/* â”€â”€â”€ MeteoSwiss Station Markers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-/* Smaller, precise dots shown when zoomed in close over Switzerland */
-.station-marker {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  pointer-events: auto;
-  cursor: pointer;
-}
-.station-dot {
-  width: 34px;
-  height: 34px;
-  border-radius: 50%;
-  background: rgba(8, 18, 40, 0.9);
-  border: 2px solid var(--temp-color, var(--accent2));
-  box-shadow: 0 0 10px var(--temp-color, var(--accent2)), 0 2px 12px rgba(0,0,0,0.6);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.15s, box-shadow 0.15s;
-}
-.station-marker:hover .station-dot {
-  transform: scale(1.2);
-  box-shadow: 0 0 18px var(--temp-color, var(--accent2)), 0 4px 20px rgba(0,0,0,0.7);
-}
-.station-dot span {
-  font-size: 10px;
-  font-weight: 700;
-  color: var(--temp-color, var(--text));
-  line-height: 1;
-}
-.station-name {
-  font-size: 9px;
-  font-weight: 600;
-  color: var(--text-dim);
-  letter-spacing: 0.04em;
-  text-shadow: 0 1px 4px rgba(0,0,0,0.9);
-  white-space: nowrap;
-}
-
 /* â”€â”€â”€ Scrollbar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 * { scrollbar-width: thin; scrollbar-color: rgba(255,255,255,0.08) transparent; }
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
 
-/* â”€â”€â”€ Responsive â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+/* --- Responsive: Tablets (601-900px) --- */
+@media (max-width: 900px) {
+  :root { --panel-w: 320px; }
+  .topbar { gap: 10px; padding: 0 14px; }
+  .search-box { max-width: 320px; }
+  .panel-city { font-size: 20px; }
+  .hero-temp { font-size: 44px; }
+  .hero-icon-wrap, .hero-icon-wrap img { width: 56px; height: 56px; }
+  .fc-cell { width: 62px; padding: 8px 4px; }
+  .fc-icon img { width: 30px; height: 30px; }
+  .fc-icon { height: 30px; margin-bottom: 4px; }
+}
+
+/* --- Responsive: Phones (max 600px) --- */
 @media (max-width: 600px) {
   :root { --panel-w: calc(100vw - 24px); }
-  #weather-panel { top: auto; bottom: -110%; left: 12px; right: 12px; width: auto; border-radius: var(--radius) var(--radius) 0 0; max-height: 75vh; }
+
+  /* Panel slides from bottom on mobile */
+  #weather-panel {
+    top: auto; bottom: -110%; left: 12px; right: 12px;
+    width: auto; max-height: 80vh;
+    border-radius: var(--radius) var(--radius) 0 0;
+    overflow-y: auto;
+  }
   #weather-panel.active { bottom: 0; left: 12px; }
-  .topbar { padding: 0 12px; }
+
+  /* Topbar: compact layout */
+  .topbar { padding: 0 10px; gap: 8px; height: 54px; }
   .logo-text { display: none; }
-  .controls { bottom: 16px; gap: 2px; padding: 4px; }
-  .ctrl-btn { width: 36px; height: 36px; }
-  .map-attrib { bottom: 66px; font-size: 10px; }
+  .logo-icon { font-size: 20px; }
+  .search-box { max-width: none; }
+  .search-box input { height: 36px; font-size: 13px; padding: 0 36px 0 36px; }
+  .search-svg { width: 15px; height: 15px; left: 12px; }
+  .search-clear { right: 10px; }
+
+  /* Topbar right buttons */
+  .topbar-right { gap: 4px; }
+  .lang-toggle { padding: 5px 8px; font-size: 11px; }
+  .unit-toggle { padding: 5px 10px; font-size: 12px; }
+
+  /* Controls bar */
+  .controls { bottom: 12px; gap: 1px; padding: 3px; }
+  .ctrl-btn { width: 38px; height: 38px; }
+  .ctrl-btn svg { width: 16px; height: 16px; }
+  .zoom-btn { font-size: 20px; }
+
+  /* Weather panel content */
+  .panel-location { padding: 16px 16px 0; }
+  .panel-city { font-size: 20px; }
+  .panel-country { font-size: 12px; }
+  .panel-hero { padding: 12px 16px; gap: 10px; }
+  .hero-icon-wrap, .hero-icon-wrap img { width: 52px; height: 52px; }
+  .hero-temp { font-size: 42px; }
+  .hero-desc { font-size: 13px; }
+  .hero-feels { font-size: 11px; }
+
+  /* Chart */
+  .temp-chart-wrap { margin: 8px 12px 0; }
+  .temp-chart-wrap canvas { height: 120px; }
+
+  /* Forecast */
+  .panel-forecast { padding: 10px 12px 12px; }
+  .fc-cell { width: 58px; padding: 8px 4px; border-radius: 10px; }
+  .fc-time { font-size: 10px; margin-bottom: 4px; }
+  .fc-icon { height: 28px; margin-bottom: 4px; }
+  .fc-icon img { width: 28px; height: 28px; }
+  .fc-temp { font-size: 12px; }
+  .fc-temp-min { font-size: 10px; }
+  .fc-rain { font-size: 8px; }
+
+  /* Hint and attribution */
+  .hint { bottom: 64px; font-size: 11px; padding: 6px 14px; }
+  .map-attrib { bottom: 58px; font-size: 9px; padding: 3px 8px; }
+
+  /* Screensaver */
+  .ss-card { padding: 20px 24px 18px; min-width: 80vw; }
+  .ss-clock { font-size: clamp(2.5rem, 10vw, 4rem); }
+}
+
+/* --- Responsive: Small phones (max 380px) --- */
+@media (max-width: 380px) {
+  .topbar { padding: 0 6px; gap: 6px; height: 48px; }
+  .search-box input { height: 32px; font-size: 12px; }
+  .lang-toggle { padding: 4px 6px; font-size: 10px; }
+  .unit-toggle { padding: 4px 8px; font-size: 11px; }
+  .panel-city { font-size: 18px; }
+  .hero-temp { font-size: 36px; }
+  .hero-icon-wrap, .hero-icon-wrap img { width: 44px; height: 44px; }
+  .fc-cell { width: 52px; }
+  .ctrl-btn { width: 34px; height: 34px; }
+}
+
+/* --- Responsive: Large screens (1200px+) --- */
+@media (min-width: 1200px) {
+  :root { --panel-w: 400px; }
+  .search-box { max-width: 560px; }
+  .topbar { padding: 0 28px; }
+}
+
+/* --- Touch: ensure minimum tap target size --- */
+@media (pointer: coarse) {
+  .ctrl-btn { min-width: 44px; min-height: 44px; }
+  .search-result { padding: 14px 16px; }
+  .fc-cell { min-width: 58px; }
+  .panel-close { width: 36px; height: 36px; }
+}
+
+/* --- Landscape phones: reduce panel height --- */
+@media (max-height: 500px) and (max-width: 900px) {
+  #weather-panel { max-height: 70vh; }
+  .panel-hero { padding: 8px 16px; }
+  .hero-icon-wrap, .hero-icon-wrap img { width: 52px; height: 52px; }
+  .hero-temp { font-size: 36px; }
+  .temp-chart-wrap canvas { height: 100px; }
+  .panel-forecast { padding: 8px 12px 10px; }
 }
 

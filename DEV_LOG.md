@@ -1,5 +1,23 @@
 # Dev Log
 
+## 2026-03-28
+
+I removed weather animations entirely. Deleted `weather-fx.js` and `local-weather-3d.js`, removed the `<canvas id="weather-canvas">` from HTML, and cleaned all `weatherFX`, `ambientWeatherCode`, `ambientWeatherDay`, `initWeatherFX()`, `syncWeatherVisuals()` references from `app.js`. Removed related CSS (`#weather-canvas`) and all animation mentions from the DEV_LOG.
+
+I removed dead code: unused `normalizeSearchText()` function, unused `toggleRotation()` function, orphan `btn-rotate` DOM reference in `stopRotation()`, unused `import math` in `server.py`, and dead `.station-marker` CSS classes from the old MeteoSwiss integration.
+
+I added comprehensive code comments throughout `app.js` — every function and section now has a comment explaining what it does.
+
+I replaced the H/W/P stats panel (Humidity, Wind, Pressure) with a MeteoSuisse-style temperature and precipitation chart. The chart canvas shows today's data with a red temperature curve (Bezier-smoothed), blue precipitation bars, a "now" marker, temperature labels on the left Y-axis, rain mm values above bars, and hour labels at the bottom. Backend updated to return hourly `precipitation` data and use `timezone: auto` for correct local times.
+
+I upgraded the forecast section from hourly 3h cards to a 7-day daily forecast. Backend now requests `daily` data from Open-Meteo (temp max/min, precipitation sum, weather code) with `forecast_days: 7`. Frontend shows day name, weather icon, max/min temperature, and daily rain total for each of the next 7 days.
+
+I added French/English internationalization (i18n). All user-visible strings are stored in an `I18N` object with `en` and `fr` translations. A `t(key)` function returns the correct string for the current language. HTML elements use `data-i18n` and `data-i18n-placeholder` attributes for static text. A language toggle button (EN/FR) was added to the top-right bar. The default language is detected from the browser (`navigator.language`). Switching language updates all UI text, re-renders the weather panel and forecast.
+
+I made the app fully responsive for all device sizes. Added CSS media queries for tablets (max 900px), phones (max 600px), small phones (max 380px), and large screens (min 1200px). On phones the weather panel slides from the bottom instead of the left and takes full width. The topbar compresses (logo text hidden, smaller search bar and buttons). Forecast cells, chart, and hero section scale down proportionally. Added touch-friendly minimum tap targets (44px) via `pointer: coarse` query. Added landscape phone support (max-height 500px) with reduced panel height. The weather panel is now scrollable on all screen sizes to handle small viewports.
+
+I fixed marker icon misalignment. The weather icon was a separate Cesium billboard positioned at the same lat/lon with a pixel offset, which caused the icon to drift away from the tooltip when the camera tilted or rotated. Fix: the icon is now drawn directly into the marker canvas using `loadIconImage()` + `ctx.drawImage()`. Both city pills and active tooltips are now single billboards containing background, icon, and text in one canvas. Removed the unused `resolveWeatherIconSource()` function. The active marker tooltip was widened to 130px to fit icon + city name + temperature side by side.
+
 ## 2026-03-27
 
 I simplified the weather backend to use a single data source. Removed OpenWeatherMap and MeteoSwiss API integrations entirely — the app now uses only Open-Meteo for all weather data (current conditions + forecasts) and Nominatim for geocoding. This eliminates the need for any API key.
@@ -171,8 +189,6 @@ I removed the self-hosted tile overlay code from `initMap()` entirely (tile temp
 
 I redesigned city markers to Google Maps-style labels. City markers are now clean white text with a colored dot and temperature below (no dark bubbles or pill shapes). Active/selected markers use a compact glass card with city name and temperature. Weather icons are positioned next to the label. The old `buildRoundMarkerDataUrl` and `buildNameStripDataUrl` functions were replaced by `buildCityLabelDataUrl` and `buildActiveMarkerDataUrl`.
 
-I added ambient weather animation. The app now saves the user's local weather condition as `ambientWeatherCode` and keeps the weather FX canvas running with that effect even when the panel is closed. When the user selects a different location, FX updates to that weather; when the panel is closed, FX reverts to the user's local weather. If geolocation is unavailable, the app fetches weather for the default home view location as a fallback.
-
 I hid the Cesium Ion credit logo and attribution text via CSS (`.cesium-widget-credits`, `.cesium-credit-logoContainer`, `.cesium-credit-textContainer` set to `display: none`).
 
 I fixed city marker rendering issues. Removed SVG `feDropShadow` filters from marker data URLs (unsupported in Cesium WebGL texture pipeline, caused blank markers). Replaced with `paint-order: stroke` text outlines for legibility. Fixed `eyeOffset` Z sign in `createImageMarker` (was positive, pushing markers behind the globe; now negative to bring them forward). Simplified marker anchor offsets for correct positioning. Weather icons now appear below the city label text. Cache-busting bumped to `app.js?v=nasa3d40`.
@@ -180,8 +196,6 @@ I fixed city marker rendering issues. Removed SVG `feDropShadow` filters from ma
 I added Esri World Boundaries and Places as a transparent label overlay on top of satellite imagery. This provides Google Maps-style city, village, road, and boundary labels natively on the map, replacing the need for hardcoded city name labels. City weather markers are now compact temperature pills (just temp + weather icon) since the Esri overlay handles place names.
 
 I fixed cities from the other side of the globe showing through the Earth (e.g. Auckland/Sydney visible over Switzerland). Root cause: `disableDepthTestDistance: Number.POSITIVE_INFINITY` disabled depth testing, so all billboards rendered regardless of occlusion. Fix: set `disableDepthTestDistance: 0` so Cesium's depth test hides markers behind the globe surface.
-
-I updated the screensaver to show weather animation while the planet rotates. The screensaver now directly restores ambient weather FX instead of calling `hidePanel()` (which could clear FX). The weather canvas z-index was raised to 55 (above screensaver z-index 50) so weather effects are visible during idle rotation.
 
 Added code comments to new marker functions and key rendering logic. Cache-busting bumped to `app.js?v=nasa3d41`.
 
@@ -219,12 +233,7 @@ Added a complete step-by-step install guide to `README.md` covering Docker insta
 
 - Slowed globe rotation from 0.15°/tick to 0.04°/tick (~4x slower) for a more cinematic feel.
 - City weather markers now stay visible during screensaver (previously hidden).
-- Weather FX canvas (clouds/rain overlay) is fully hidden during screensaver via `ss-hidden` class with `visibility: hidden` for a clean view.
 - Screensaver zoom adjusted to `HOME_VIEW.range * 0.4` for a closer globe view showing weather markers clearly.
-
-### Startup weather loading
-
-Weather FX (ambient effects like rain/clouds) now loads immediately at startup by fetching weather for the default HOME_VIEW location, without waiting for browser geolocation. Geolocation still runs after and overrides if permission is granted. The weather panel does NOT open automatically — only the ambient FX are set.
 
 ### Reverse geocoding fix (Nominatim 429 rate-limiting)
 

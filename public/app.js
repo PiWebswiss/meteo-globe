@@ -1,8 +1,96 @@
 ﻿/*
   MeteoGlobe - CesiumJS edition
-  Core behavior: click weather, search, locate, forecast panel, weather FX.
+  Interactive 3D globe that shows real-time weather for any location.
+  Uses Open-Meteo API (free, no key) for weather data, Nominatim for place names,
+  and CesiumJS for the 3D globe rendering with Esri satellite imagery.
 */
 
+// --- Internationalization (i18n) ---
+// All user-visible strings in English and French.
+// t('key') returns the string for the current language.
+let lang = (navigator.language || '').startsWith('fr') ? 'fr' : 'en';
+
+const I18N = {
+  en: {
+    loading: 'Loading MeteoGlobe...',
+    searchPlaceholder: 'Search city or country...',
+    clickHint: 'Click anywhere on the 3D globe for weather',
+    forecast7day: '7-Day Forecast',
+    ssHint: 'Move mouse or touch to return',
+    feelsLike: 'Feels like',
+    noResults: 'No locations found',
+    forecastLoading: 'Loading forecast...',
+    forecastUnavailable: 'Forecast unavailable',
+    noData: 'No data',
+    refreshing: 'Refreshing weather...',
+    refreshFailed: 'Refresh failed',
+    weatherError: 'Weather error',
+    searchError: 'Search weather error',
+    locating: 'Locating your position...',
+    locationBlocked: 'Location blocked by browser. Allow it in site settings.',
+    locationUnavail: 'Location unavailable. Use search or click on the globe.',
+    liveUpdated: 'Live weather updated for your location',
+    yourLocation: 'Your location',
+    cityUnavail: 'City weather unavailable. Check API/network.',
+    cesiumFail: 'CesiumJS failed to load. Check network and hard refresh (Ctrl+F5).',
+    unknown: 'Unknown',
+    selected: 'Selected',
+    fetching: 'Fetching...',
+    now: 'now',
+    today: 'Today',
+    dayNames: ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'],
+  },
+  fr: {
+    loading: 'Chargement de MeteoGlobe...',
+    searchPlaceholder: 'Rechercher une ville ou un pays...',
+    clickHint: 'Cliquez n\'importe ou sur le globe pour la meteo',
+    forecast7day: 'Previsions 7 jours',
+    ssHint: 'Bougez la souris ou touchez pour revenir',
+    feelsLike: 'Ressenti',
+    noResults: 'Aucun lieu trouve',
+    forecastLoading: 'Chargement des previsions...',
+    forecastUnavailable: 'Previsions indisponibles',
+    noData: 'Pas de donnees',
+    refreshing: 'Actualisation de la meteo...',
+    refreshFailed: 'Echec de l\'actualisation',
+    weatherError: 'Erreur meteo',
+    searchError: 'Erreur de recherche meteo',
+    locating: 'Localisation en cours...',
+    locationBlocked: 'Localisation bloquee par le navigateur. Autorisez-la dans les parametres.',
+    locationUnavail: 'Localisation indisponible. Utilisez la recherche ou cliquez sur le globe.',
+    liveUpdated: 'Meteo mise a jour pour votre position',
+    yourLocation: 'Votre position',
+    cityUnavail: 'Meteo des villes indisponible. Verifiez le reseau.',
+    cesiumFail: 'CesiumJS n\'a pas pu charger. Verifiez le reseau et actualisez (Ctrl+F5).',
+    unknown: 'Inconnu',
+    selected: 'Selection',
+    fetching: 'Chargement...',
+    now: 'maint.',
+    today: 'Auj.',
+    dayNames: ['Dim', 'Lun', 'Mar', 'Mer', 'Jeu', 'Ven', 'Sam'],
+  },
+};
+
+// Returns the translated string for the given key
+function t(key) {
+  return (I18N[lang] || I18N.en)[key] || (I18N.en)[key] || key;
+}
+
+// Updates all HTML elements with data-i18n or data-i18n-placeholder attributes
+function applyI18n() {
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const key = el.getAttribute('data-i18n');
+    el.textContent = t(key);
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const key = el.getAttribute('data-i18n-placeholder');
+    el.placeholder = t(key);
+  });
+}
+
+// --- Weather icon mapping ---
+// Maps OpenWeatherMap weather codes to MeteoSwiss icon codes.
+// { d: daytime icon, n: nighttime icon }
 const OWM_TO_METEO = {
   800: { d: 1, n: 101 },
   801: { d: 2, n: 102 },
@@ -19,30 +107,29 @@ const OWM_TO_METEO = {
   741: { d: 25, n: 25 },
 };
 
-const HOME_VIEW = { lat: 20, lon: 10, range: 12_000_000 };
-const ROTATION_STEP_DEG = 0.04;
-const ROTATION_TICK_MS = 30;
+// --- Constants ---
+const HOME_VIEW = { lat: 20, lon: 10, range: 12_000_000 }; // Default globe view (center of Africa, zoomed out)
+const ROTATION_STEP_DEG = 0.04;  // How many degrees the globe rotates per tick in screensaver
+const ROTATION_TICK_MS = 30;     // Milliseconds between each rotation tick
 
-let map;
-let weatherFX;
-let cityWeatherCache = [];
-let activeTarget = null;
-let activeMarkerData = null;
-let useFahrenheit = false;
-let userLocation = null;
-let refreshInFlight = false;
-let rotateTimer = null;
-let searchTimer = null;
-let hintTimer = null;
-let cityRetryTimer = null;
-let cesiumLoadPromise = null;
-let mapContextMenuBound = false;
-let zoomRenderTimer = null;
-let lastZoomTier = 1;
-let ambientWeatherCode = null;
-let ambientWeatherDay = true;
-let cityPlacemarkMap = new Map(); // name -> {bubble, icon, tier}
-let activeMarkerObjects = [];
+// --- Global state ---
+let map;                          // CesiumJS map adapter (wraps the Cesium Viewer)
+let cityWeatherCache = [];        // Cached weather data for all cities on the globe
+let activeTarget = null;          // Currently selected location { lat, lon, source }
+let activeMarkerData = null;      // Weather data for the currently selected location
+let useFahrenheit = false;        // Temperature unit toggle (default: Celsius)
+let userLocation = null;          // User's GPS location { lat, lon, acc }
+let refreshInFlight = false;      // Prevents multiple simultaneous refresh requests
+let rotateTimer = null;           // Interval ID for globe auto-rotation
+let searchTimer = null;           // Debounce timer for search input
+let hintTimer = null;             // Timer for hiding hint messages
+let cityRetryTimer = null;        // Retry timer if city weather loading fails
+let cesiumLoadPromise = null;     // Promise for loading CesiumJS library
+let mapContextMenuBound = false;  // Whether right-click is already blocked on the globe
+let zoomRenderTimer = null;       // Debounce timer for zoom-based marker updates
+let lastZoomTier = 1;             // Current zoom tier (1=global, 2=regional, 3=close)
+let cityPlacemarkMap = new Map(); // Map of city name -> { bubble marker, icon marker, tier }
+let activeMarkerObjects = [];     // Markers for the currently selected location
 
 // t: city tier — 1=megacity (always shown), 2=major city (shown at regional zoom), 3=smaller city (shown when zoomed in)
 const CITIES = [
@@ -140,7 +227,7 @@ const CITIES = [
   { name: 'Wellington',   lat: -41.29, lon: 174.78,  t: 3 },
 ];
 
-// Quick lookup: city name ? tier
+// Quick lookup: city name -> tier number (for fast visibility checks)
 const CITY_TIER = new Map(CITIES.map(c => [c.name, c.t]));
 
 // Zoom thresholds: returns max tier to display at given camera range (metres)
@@ -153,6 +240,8 @@ function getMaxCityTier(range) {
   return 3;
 }
 
+// --- Script/CSS loading helpers ---
+// Loads an external JS script with a timeout (rejects if too slow)
 function loadScriptWithTimeout(src, timeoutMs = 12000) {
   return new Promise((resolve, reject) => {
     const script = document.createElement('script');
@@ -181,6 +270,7 @@ function loadScriptWithTimeout(src, timeoutMs = 12000) {
   });
 }
 
+// Adds a CSS stylesheet to the page (only once per href)
 function ensureStylesheetLoaded(href) {
   if (document.querySelector(`link[data-href="${href}"]`)) return;
   const link = document.createElement('link');
@@ -190,17 +280,22 @@ function ensureStylesheetLoaded(href) {
   document.head.appendChild(link);
 }
 
+// --- Zoom / range conversion ---
+// Converts camera height (metres) to a Google Maps-style zoom level (2-18)
 function rangeToZoom(range) {
   const r = Math.max(2_000, asFiniteNumber(range, HOME_VIEW.range));
   const z = 16 - Math.log2(r / 5_000);
   return Math.max(2, Math.min(18, Math.round(z)));
 }
 
+// Converts a zoom level back to camera height (metres)
 function zoomToRange(zoom) {
   const z = Math.max(2, Math.min(18, asFiniteNumber(zoom, 2)));
   return 5_000 * (2 ** (16 - z));
 }
 
+// --- CesiumJS loader ---
+// Loads the CesiumJS library from CDN (only once). Returns true if successful.
 async function ensureCesiumLoaded() {
   if (window.Cesium?.Viewer) return true;
   if (cesiumLoadPromise) {
@@ -227,11 +322,14 @@ async function ensureCesiumLoaded() {
   return !!window.Cesium?.Viewer;
 }
 
+// --- DOM helpers ---
+// Sets the text content of an element by its ID
 function setText(id, text) {
   const el = document.getElementById(id);
   if (el) el.textContent = text;
 }
 
+// Adds or removes the 'active' CSS class on an element
 function showEl(id, active) {
   const el = document.getElementById(id);
   if (!el) return;
@@ -239,10 +337,13 @@ function showEl(id, active) {
   else el.classList.remove('active');
 }
 
+// Capitalizes the first letter of a string
 function cap(s) {
   return s ? s.charAt(0).toUpperCase() + s.slice(1) : '';
 }
 
+// --- Weather helpers ---
+// Converts an OWM weather code to a MeteoSwiss icon code (used for /api/icon/{code})
 function getMeteoIcon(owmCode, daytime = true) {
   const m = OWM_TO_METEO[owmCode];
   if (m) return daytime ? m.d : m.n;
@@ -254,6 +355,7 @@ function getMeteoIcon(owmCode, daytime = true) {
   return 1;
 }
 
+// Returns a short text label for a weather code (used as fallback when icon fails)
 function getWeatherEmoji(owmCode, daytime = true) {
   if (owmCode >= 200 && owmCode < 300) return 'TS';
   if (owmCode >= 300 && owmCode < 400) return 'DZ';
@@ -267,6 +369,7 @@ function getWeatherEmoji(owmCode, daytime = true) {
   return 'WX';
 }
 
+// Generates an inline SVG data URL as a fallback weather icon
 function buildWeatherIconDataUrl(owmCode, daytime = true) {
   const txt = getWeatherEmoji(owmCode, daytime);
   const iconText = escapeXml(txt);
@@ -274,20 +377,14 @@ function buildWeatherIconDataUrl(owmCode, daytime = true) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
-function resolveWeatherIconSource(iconCode, owmCode, daytime, callback) {
-  const apiUrl = `/api/icon/${iconCode}`;
-  const iconImg = new Image();
-  iconImg.onload = () => callback(apiUrl);
-  iconImg.onerror = () => callback(buildWeatherIconDataUrl(owmCode, daytime));
-  iconImg.src = apiUrl;
-}
-
+// Checks if it's daytime at the weather location (using sunrise/sunset timestamps)
 function isDaytime(data) {
   if (!data || !data.sys) return true;
   if (!data.sys.sunrise || !data.sys.sunset) return true;
   return data.dt >= data.sys.sunrise && data.dt <= data.sys.sunset;
 }
 
+// Returns a color based on temperature (blue=cold, red=hot)
 function tempColor(c) {
   if (c < -15) return '#00bfff';
   if (c < 0) return '#64b5f6';
@@ -297,16 +394,19 @@ function tempColor(c) {
   return '#f44336';
 }
 
+// Formats temperature for display (respects C/F toggle)
 function displayTemp(c) {
   if (useFahrenheit) return `${Math.round(c * 9 / 5 + 32)}°F`;
   return `${Math.round(c)}°C`;
 }
 
+// Safely converts a value to a number, returns fallback if invalid
 function asFiniteNumber(v, fallback = 0) {
   const n = Number(v);
   return Number.isFinite(n) ? n : fallback;
 }
 
+// Escapes special characters for safe use in SVG/XML strings
 function escapeXml(s) {
   return String(s)
     .replace(/&/g, '&amp;')
@@ -316,6 +416,7 @@ function escapeXml(s) {
     .replace(/'/g, '&apos;');
 }
 
+// Cleans a city name to ASCII-safe text, truncated to maxLen (avoids rendering issues)
 function safeCityName(name, maxLen = 14) {
   return (name || '')
     .toString()
@@ -327,6 +428,7 @@ function safeCityName(name, maxLen = 14) {
     .slice(0, maxLen);
 }
 
+// Formats temperature for marker badges (e.g. "+23°C")
 function tempBadgeText(c) {
   const n = asFiniteNumber(c, 0);
   if (useFahrenheit) {
@@ -337,14 +439,15 @@ function tempBadgeText(c) {
   return `${v > 0 ? '+' : ''}${v}\u00B0C`;
 }
 
-// Canvas-rendered pill for city weather markers.
-// Uses 2x internal scale and renders text at high quality for Cesium billboard.
-function buildCityLabelCanvas({ temp }) {
-  const t = asFiniteNumber(temp, 0);
-  const color = tempColor(t);
-  const tempTxt = tempBadgeText(t);
-  // Display size 96x34. Canvas at 2x = 192x68 pixels.
-  // Cesium billboard scale = 0.5 → maps 192px canvas to 96px display, pixel-perfect.
+// --- Marker rendering ---
+// Draws a small pill-shaped marker for cities on the globe.
+// Rendered on a <canvas> at 2x resolution for sharp text in CesiumJS.
+// The pill shows a weather icon on the left and the temperature text on the right.
+// iconImg is an optional Image element to draw inside the pill.
+function buildCityLabelCanvas({ temp, iconImg }) {
+  const tv = asFiniteNumber(temp, 0);
+  const color = tempColor(tv);
+  const tempTxt = tempBadgeText(tv);
   const S = 2;
   const W = 96 * S, H = 34 * S;
   const c = document.createElement('canvas');
@@ -360,32 +463,47 @@ function buildCityLabelCanvas({ temp }) {
   ctx.lineWidth = 1.5 * S;
   ctx.stroke();
 
-  // Color dot on the left
-  ctx.beginPath();
-  ctx.arc(17 * S, 17 * S, 5 * S, 0, Math.PI * 2);
-  ctx.fillStyle = color;
-  ctx.globalAlpha = 0.5;
-  ctx.fill();
-  ctx.globalAlpha = 1;
+  // Weather icon on the left, clipped to a circle so any icon size looks clean
+  const iconSize = 22 * S;
+  const iconCx = 19 * S;
+  const iconCy = 17 * S;
+  const iconR = iconSize / 2;
+  if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.arc(iconCx, iconCy, iconR, 0, Math.PI * 2);
+    ctx.clip();
+    ctx.drawImage(iconImg, iconCx - iconR, iconCy - iconR, iconSize, iconSize);
+    ctx.restore();
+  } else {
+    // Fallback: colored dot
+    ctx.beginPath();
+    ctx.arc(iconCx, iconCy, 5 * S, 0, Math.PI * 2);
+    ctx.fillStyle = color;
+    ctx.globalAlpha = 0.5;
+    ctx.fill();
+    ctx.globalAlpha = 1;
+  }
 
-  // Temperature text
+  // Temperature text (shifted right to make room for icon)
   ctx.font = `800 ${14 * S}px Inter, Arial, sans-serif`;
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(tempTxt, 58 * S, 17.5 * S);
+  ctx.fillText(tempTxt, 62 * S, 17.5 * S);
 
   return c;
 }
 
-// Canvas-rendered tooltip for active/selected location.
-function buildActiveMarkerCanvas({ name, temp }) {
-  const t = asFiniteNumber(temp, 0);
-  const color = tempColor(t);
-  const tempTxt = tempBadgeText(t);
-  const city = safeCityName(name || 'Selected', 16);
+// Draws a larger tooltip marker for the currently selected location.
+// Shows weather icon + city name on top and colored temperature below.
+function buildActiveMarkerCanvas({ name, temp, iconImg }) {
+  const tv = asFiniteNumber(temp, 0);
+  const color = tempColor(tv);
+  const tempTxt = tempBadgeText(tv);
+  const city = safeCityName(name || t('selected'), 16);
   const S = 2;
-  const W = 120 * S, H = 46 * S;
+  const W = 130 * S, H = 46 * S;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   const ctx = c.getContext('2d');
@@ -401,26 +519,52 @@ function buildActiveMarkerCanvas({ name, temp }) {
   ctx.stroke();
   ctx.globalAlpha = 1;
 
-  // City name
+  // Weather icon on the left, clipped to a rounded rect so any icon size looks clean
+  const iconSize = 30 * S;
+  const iconX = 10 * S;
+  const iconY = (H - iconSize) / 2;
+  if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
+    ctx.save();
+    ctx.beginPath();
+    ctx.roundRect(iconX, iconY, iconSize, iconSize, 6 * S);
+    ctx.clip();
+    ctx.drawImage(iconImg, iconX, iconY, iconSize, iconSize);
+    ctx.restore();
+  }
+
+  // City name (right of icon, top)
+  const textX = 44 * S;
   ctx.font = `700 ${10 * S}px Inter, Arial, sans-serif`;
-  ctx.textAlign = 'center';
+  ctx.textAlign = 'left';
   ctx.textBaseline = 'middle';
   ctx.fillStyle = '#ffffff';
-  ctx.fillText(city, W / 2, 15 * S);
+  ctx.fillText(city, textX, 15 * S);
 
-  // Temperature
-  ctx.font = `800 ${15 * S}px Inter, Arial, sans-serif`;
+  // Temperature (right of icon, bottom)
+  ctx.font = `800 ${14 * S}px Inter, Arial, sans-serif`;
   ctx.fillStyle = color;
-  ctx.fillText(tempTxt, W / 2, 33 * S);
+  ctx.fillText(tempTxt, textX, 33 * S);
 
   return c;
 }
 
-function windDir(deg) {
-  const dirs = ['N', 'NE', 'E', 'SE', 'S', 'SW', 'W', 'NW'];
-  return dirs[Math.round((deg || 0) / 45) % 8];
+// Preloads a weather icon image and calls back with the Image element.
+// Used to draw icons directly into marker canvases.
+function loadIconImage(iconCode, owmCode, daytime, callback) {
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => callback(img);
+  img.onerror = () => {
+    // Try fallback SVG data URL
+    const fallback = new Image();
+    fallback.src = buildWeatherIconDataUrl(owmCode, daytime);
+    fallback.onload = () => callback(fallback);
+    fallback.onerror = () => callback(null);
+  };
+  img.src = `/api/icon/${iconCode}`;
 }
 
+// Calculates the local time at the weather location using timezone offset
 function localTime(data) {
   if (!data || !Number.isFinite(data.timezone) || !Number.isFinite(data.dt)) return '';
   const d = new Date((data.dt + data.timezone) * 1000);
@@ -429,7 +573,7 @@ function localTime(data) {
   return `${h}:${m} (local)`;
 }
 
-
+// Shows a temporary hint message at the bottom of the screen
 function flashHint(message, duration = 2600) {
   const hint = document.getElementById('hint');
   if (!hint) return;
@@ -439,6 +583,8 @@ function flashHint(message, duration = 2600) {
   hintTimer = setTimeout(() => hint.classList.add('fade'), duration);
 }
 
+// --- API helpers ---
+// Builds an API URL with query parameters (e.g. /api/weather?lat=46&lon=6)
 function apiPath(path, params = {}) {
   const url = new URL(path, window.location.origin);
   Object.entries(params).forEach(([k, v]) => {
@@ -447,6 +593,7 @@ function apiPath(path, params = {}) {
   return `${url.pathname}${url.search}`;
 }
 
+// Extracts an error message from a failed API response
 async function readErrorMessage(res) {
   try {
     const body = await res.json();
@@ -455,6 +602,7 @@ async function readErrorMessage(res) {
   return `${res.status} ${res.statusText}`;
 }
 
+// Fetches current weather from the backend for given coordinates
 async function fetchWeatherAt(lat, lon, force = false) {
   const res = await fetch(apiPath('/api/weather', { lat, lon, force }));
   if (!res.ok) throw new Error(await readErrorMessage(res));
@@ -464,8 +612,10 @@ async function fetchWeatherAt(lat, lon, force = false) {
 // fetchPointWeather is an alias kept for call-site readability
 const fetchPointWeather = fetchWeatherAt;
 
+// --- Weather panel ---
+// Shows a loading state in the weather panel while data is being fetched
 function panelLoading() {
-  setText('loc-city', 'Fetching...');
+  setText('loc-city', t('fetching'));
   setText('loc-country', '');
   setText('loc-time', '');
   setText('hero-temp', '-');
@@ -476,10 +626,7 @@ function panelLoading() {
     '<div class="forecast-placeholder">Loading...</div>';
 }
 
-function syncWeatherVisuals(code, day) {
-  if (weatherFX) weatherFX.setWeather(code, day);
-}
-
+// Fills and shows the weather panel with data (icon, temp, description, forecast)
 function showPanel(data, opts = {}) {
   const w0 = data?.weather?.[0] || { id: 800, description: 'weather' };
   const code = Number.isFinite(Number(w0.id)) ? Number(w0.id) : 800;
@@ -489,7 +636,7 @@ function showPanel(data, opts = {}) {
   const feelsLike = Number.isFinite(data?.main?.feels_like) ? data.main.feels_like : temp;
   const tc = tempColor(temp);
 
-  setText('loc-city', data.name || 'Unknown');
+  setText('loc-city', data.name || t('unknown'));
   setText('loc-country', `${data?.sys?.country || ''}`);
   setText('loc-time', localTime(data));
 
@@ -513,20 +660,11 @@ function showPanel(data, opts = {}) {
   tempEl.textContent = displayTemp(temp);
   tempEl.style.color = tc;
   setText('hero-desc', cap(w0.description || 'Weather'));
-  setText('hero-feels', `Feels like ${displayTemp(feelsLike)}`);
-
-  setText('s-humidity', data?.main?.humidity != null ? `${Math.round(data.main.humidity)}%` : '-');
-  const wsRaw = Number.isFinite(data?.wind?.speed) ? data.wind.speed : null;
-  const ws = wsRaw != null ? (wsRaw * 3.6).toFixed(0) : null;
-  const wd = data?.wind?.deg != null ? ` ${windDir(data.wind.deg)}` : '';
-  setText('s-wind', ws != null ? `${ws} km/h${wd}` : '-');
-  setText('s-pressure', data?.main?.pressure != null ? `${Math.round(data.main.pressure)} hPa` : '-');
+  setText('hero-feels', `${t('feelsLike')} ${displayTemp(feelsLike)}`);
 
   showEl('weather-panel', true);
   activeMarkerData = data;
   activeTarget = opts.target || (data.coord ? { lat: data.coord.lat, lon: data.coord.lon, source: 'weather' } : null);
-
-  syncWeatherVisuals(code, day);
 
   if (data.coord) {
     loadForecast(data.coord.lat, data.coord.lon, !!opts.force);
@@ -540,23 +678,19 @@ function showPanel(data, opts = {}) {
   document.getElementById('hint').classList.add('fade');
 }
 
+// Hides the weather panel and clears the selected marker
 function hidePanel() {
   document.getElementById('weather-panel').classList.remove('active');
-  // Restore ambient weather FX (user's local weather) instead of clearing
-  if (weatherFX && ambientWeatherCode != null) {
-    weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
-  } else if (weatherFX) {
-    weatherFX.clear();
-  }
   clearActiveMarkers();
   activeMarkerData = null;
   activeTarget = null;
   renderCityMarkers(cityWeatherCache);
 }
 
+// Fetches and displays the hourly forecast (48h) from the backend
 async function loadForecast(lat, lon, force = false) {
   const scroll = document.getElementById('forecast-scroll');
-  scroll.innerHTML = '<div class="forecast-placeholder">Loading forecast...</div>';
+  scroll.innerHTML = `<div class="forecast-placeholder">${t('forecastLoading')}</div>`;
   const src = document.getElementById('data-source');
 
   try {
@@ -566,48 +700,276 @@ async function loadForecast(lat, lon, force = false) {
     const list = data?.list || [];
 
     src.textContent = 'Open-Meteo';
-    renderForecast(scroll, list);
+    renderForecast(scroll, data?.daily || []);
+    // Draw the temperature curve chart (MeteoSuisse style) for today
+    renderTempChart(data?.hourly || []);
   } catch (err) {
-    const msg = err?.message || 'Forecast unavailable';
-    scroll.innerHTML = `<div class="forecast-placeholder">Forecast unavailable (${msg})</div>`;
+    const msg = err?.message || t('forecastUnavailable');
+    scroll.innerHTML = `<div class="forecast-placeholder">${t('forecastUnavailable')} (${msg})</div>`;
   }
 }
 
-function renderForecast(scroll, list) {
-  if (!list || !list.length) {
-    scroll.innerHTML = '<div class="forecast-placeholder">No data</div>';
+// Renders 7-day forecast cards (day name, icon, min/max temp, rain) into the scroll area
+function renderForecast(scroll, daily) {
+  if (!daily || !daily.length) {
+    scroll.innerHTML = `<div class="forecast-placeholder">${t('noData')}</div>`;
     return;
   }
 
   scroll.innerHTML = '';
-  list.slice(0, 14).forEach((item) => {
-    const dt = new Date(item.dt * 1000);
-    const h = `${dt.getHours().toString().padStart(2, '0')}:00`;
-    const t = Math.round(item.main?.temp ?? 0);
-    const tc = tempColor(t);
-    const day = dt.getHours() >= 6 && dt.getHours() < 20;
-    const code = item.weather?.[0]?.id ?? 800;
-    const iconCode = getMeteoIcon(code, day);
-    const rain = item.pop ? `${Math.round(item.pop * 100)}%` : '';
+  daily.slice(0, 7).forEach((item, idx) => {
+    // Parse date string "2026-03-28"
+    const parts = (item.date || '').split('-');
+    const dt = new Date(+parts[0], +parts[1] - 1, +parts[2]);
+    const dayName = idx === 0 ? t('today') : t('dayNames')[dt.getDay()];
+    const tMax = Math.round(item.temp_max ?? 0);
+    const tMin = Math.round(item.temp_min ?? 0);
+    const code = item.code ?? 800;
+    const iconCode = getMeteoIcon(code, true);
+    const rain = (item.precip ?? 0) >= 0.1 ? `${item.precip.toFixed(1)} mm` : '';
 
     const cell = document.createElement('div');
     cell.className = 'fc-cell';
     cell.innerHTML = `
-      <div class="fc-time">${h}</div>
+      <div class="fc-time">${dayName}</div>
       <div class="fc-icon">
         <img src="/api/icon/${iconCode}" alt="" onerror="this.outerHTML='<span>--</span>'">
       </div>
-      <div class="fc-temp" style="color:${tc}">${t > 0 ? '+' : ''}${t}°</div>
+      <div class="fc-temp">
+        <span style="color:${tempColor(tMax)}">${tMax}°</span>
+        <span class="fc-temp-min" style="color:${tempColor(tMin)}">${tMin}°</span>
+      </div>
       <div class="fc-rain">${rain}</div>
     `;
     scroll.appendChild(cell);
   });
 }
 
-function normalizeSearchText(s) {
-  return (s || '').toString().toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+// Draws a MeteoSuisse-style chart: red temperature curve on top, blue rain bars below.
+// Data comes as local ISO time strings from the backend (timezone:auto).
+// Shows today 00:00-23:00 with a "now" marker, temp labels, and rain mm values.
+function renderTempChart(hourly) {
+  const canvas = document.getElementById('temp-chart');
+  if (!canvas) return;
+  const wrap = canvas.parentElement;
+  if (!wrap) return;
+
+  if (!hourly || !hourly.length) {
+    canvas.width = 0; canvas.height = 0;
+    return;
+  }
+
+  // Parse local ISO times (e.g. "2026-03-28T14:00") into { hour, temp, precip, pop }
+  const parsed = hourly.map(h => {
+    const m = (h.time || '').match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+    if (!m) return null;
+    return {
+      year: +m[1], month: +m[2], day: +m[3], hour: +m[4],
+      temp: h.temp ?? 0,
+      precip: Math.max(0, h.precip ?? 0),
+      pop: h.pop ?? 0,
+    };
+  }).filter(Boolean);
+
+  if (parsed.length < 2) { canvas.width = 0; canvas.height = 0; return; }
+
+  // Filter to today only (same date as the first data point)
+  const today = parsed[0];
+  const todayPts = parsed.filter(p => p.year === today.year && p.month === today.month && p.day === today.day);
+  if (todayPts.length < 2) { canvas.width = 0; canvas.height = 0; return; }
+
+  // High-DPI canvas
+  const dpr = window.devicePixelRatio || 1;
+  const W = wrap.clientWidth;
+  const H = 150;
+  canvas.width = W * dpr;
+  canvas.height = H * dpr;
+  canvas.style.width = W + 'px';
+  canvas.style.height = H + 'px';
+  const ctx = canvas.getContext('2d');
+  ctx.scale(dpr, dpr);
+
+  // Layout zones:
+  // Top area: temperature curve (padT to rainTop)
+  // Bottom area: rain bars (rainTop to H - padB)
+  // Time labels: below everything
+  const padL = 30, padR = 30, padT = 18, padB = 18;
+  const rainZoneH = 32; // height of the rain bar area
+  const gap = 6;        // gap between temp curve and rain bars
+  const tempBot = H - padB - rainZoneH - gap;
+  const tempH = tempBot - padT;
+  const rainTop = H - padB - rainZoneH;
+  const rainBot = H - padB;
+  const cw = W - padL - padR;
+
+  // Temperature range
+  const temps = todayPts.map(p => p.temp);
+  let tMin = Math.floor(Math.min(...temps) - 1);
+  let tMax = Math.ceil(Math.max(...temps) + 1);
+  if (tMax - tMin < 4) { tMin -= 2; tMax += 2; }
+  const tRange = tMax - tMin || 1;
+
+  // Rain range (cap at 10mm for display)
+  const maxPrecip = Math.max(0.5, ...todayPts.map(p => p.precip));
+  const rainCap = Math.min(maxPrecip * 1.3, Math.max(maxPrecip, 2));
+
+  // Map hour -> x position (0-23 across the chart)
+  const xOf = (hour) => padL + (hour / 23) * cw;
+  const tempY = (t) => padT + tempH - ((t - tMin) / tRange) * tempH;
+
+  // --- Background grid lines (subtle) ---
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  // Horizontal lines for temperature zone at nice intervals
+  const tStep = tRange <= 8 ? 2 : tRange <= 16 ? 4 : 5;
+  for (let t = Math.ceil(tMin / tStep) * tStep; t <= tMax; t += tStep) {
+    const y = tempY(t);
+    ctx.beginPath(); ctx.moveTo(padL, y); ctx.lineTo(W - padR, y); ctx.stroke();
+  }
+  // Vertical lines every 6h
+  for (let h = 0; h <= 24; h += 6) {
+    const x = xOf(h);
+    ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, rainBot); ctx.stroke();
+  }
+
+  // --- Rain bars (blue, MeteoSuisse style) ---
+  const barW = Math.max(3, cw / todayPts.length - 1);
+  for (const p of todayPts) {
+    if (p.precip <= 0.01) continue;
+    const x = xOf(p.hour);
+    const barH = Math.max(2, (p.precip / rainCap) * rainZoneH);
+    const y = rainBot - barH;
+
+    // Gradient blue bar: lighter for small rain, darker for heavy
+    const intensity = Math.min(1, p.precip / 5);
+    const r = Math.round(30 + 20 * (1 - intensity));
+    const g = Math.round(100 + 60 * (1 - intensity));
+    const b = Math.round(220 + 35 * (1 - intensity));
+    ctx.fillStyle = `rgba(${r},${g},${b},0.85)`;
+
+    // Rounded top bar
+    const radius = Math.min(2, barH / 2);
+    ctx.beginPath();
+    ctx.moveTo(x - barW / 2, rainBot);
+    ctx.lineTo(x - barW / 2, y + radius);
+    ctx.arcTo(x - barW / 2, y, x, y, radius);
+    ctx.arcTo(x + barW / 2, y, x + barW / 2, y + radius, radius);
+    ctx.lineTo(x + barW / 2, rainBot);
+    ctx.closePath();
+    ctx.fill();
+
+    // Show mm value above bar if significant
+    if (p.precip >= 0.5) {
+      ctx.font = '600 8px Inter, Arial, sans-serif';
+      ctx.textAlign = 'center';
+      ctx.fillStyle = 'rgba(80,160,255,0.9)';
+      ctx.fillText(`${p.precip.toFixed(1)}`, x, y - 3);
+    }
+  }
+
+  // --- Temperature gradient fill under curve ---
+  const gradFill = ctx.createLinearGradient(0, padT, 0, tempBot);
+  gradFill.addColorStop(0, 'rgba(220,60,60,0.18)');
+  gradFill.addColorStop(1, 'rgba(220,60,60,0.0)');
+  ctx.beginPath();
+  ctx.moveTo(xOf(todayPts[0].hour), tempBot);
+  ctx.lineTo(xOf(todayPts[0].hour), tempY(todayPts[0].temp));
+  for (let i = 1; i < todayPts.length; i++) {
+    const prev = todayPts[i - 1], cur = todayPts[i];
+    const x0 = xOf(prev.hour), y0 = tempY(prev.temp);
+    const x1 = xOf(cur.hour), y1 = tempY(cur.temp);
+    const cpx = (x0 + x1) / 2;
+    ctx.bezierCurveTo(cpx, y0, cpx, y1, x1, y1);
+  }
+  ctx.lineTo(xOf(todayPts[todayPts.length - 1].hour), tempBot);
+  ctx.closePath();
+  ctx.fillStyle = gradFill;
+  ctx.fill();
+
+  // --- Temperature curve (red line, MeteoSuisse style) ---
+  ctx.beginPath();
+  ctx.moveTo(xOf(todayPts[0].hour), tempY(todayPts[0].temp));
+  for (let i = 1; i < todayPts.length; i++) {
+    const prev = todayPts[i - 1], cur = todayPts[i];
+    const x0 = xOf(prev.hour), y0 = tempY(prev.temp);
+    const x1 = xOf(cur.hour), y1 = tempY(cur.temp);
+    const cpx = (x0 + x1) / 2;
+    ctx.bezierCurveTo(cpx, y0, cpx, y1, x1, y1);
+  }
+  ctx.strokeStyle = '#e04040';
+  ctx.lineWidth = 2.5;
+  ctx.lineJoin = 'round';
+  ctx.lineCap = 'round';
+  ctx.stroke();
+
+  // --- "Now" vertical marker (red dashed line) ---
+  const nowH = new Date().getHours() + new Date().getMinutes() / 60;
+  if (nowH >= todayPts[0].hour && nowH <= todayPts[todayPts.length - 1].hour) {
+    const nowX = xOf(nowH);
+    ctx.setLineDash([4, 3]);
+    ctx.strokeStyle = 'rgba(224,64,64,0.6)';
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.moveTo(nowX, padT);
+    ctx.lineTo(nowX, rainBot);
+    ctx.stroke();
+    ctx.setLineDash([]);
+
+    // Small "now" label
+    ctx.font = '700 8px Inter, Arial, sans-serif';
+    ctx.textAlign = 'center';
+    ctx.fillStyle = 'rgba(224,64,64,0.8)';
+    ctx.fillText(t('now'), nowX, padT - 5);
+  }
+
+  // --- Temperature labels on left Y-axis ---
+  ctx.font = '600 9px Inter, Arial, sans-serif';
+  ctx.textAlign = 'right';
+  ctx.fillStyle = 'rgba(220,80,80,0.7)';
+  for (let t = Math.ceil(tMin / tStep) * tStep; t <= tMax; t += tStep) {
+    ctx.fillText(`${t}°`, padL - 4, tempY(t) + 3);
+  }
+
+  // --- Rain axis label on right ---
+  if (maxPrecip > 0.1) {
+    ctx.textAlign = 'left';
+    ctx.fillStyle = 'rgba(80,160,255,0.6)';
+    ctx.font = '600 8px Inter, Arial, sans-serif';
+    ctx.fillText('mm', W - padR + 4, rainTop + 8);
+  }
+
+  // --- Time labels at bottom (every 3h) ---
+  ctx.font = '600 9px Inter, Arial, sans-serif';
+  ctx.textAlign = 'center';
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  for (let h = 0; h <= 23; h += 3) {
+    ctx.fillText(`${h.toString().padStart(2, '0')}h`, xOf(h), H - 4);
+  }
+
+  // --- Temperature value labels on curve (every 3h) ---
+  ctx.font = '700 9px Inter, Arial, sans-serif';
+  ctx.textAlign = 'center';
+  for (const p of todayPts) {
+    if (p.hour % 3 !== 0) continue;
+    const x = xOf(p.hour);
+    const y = tempY(p.temp);
+
+    // Small dot on the curve
+    ctx.beginPath();
+    ctx.arc(x, y, 2.5, 0, Math.PI * 2);
+    ctx.fillStyle = '#e04040';
+    ctx.fill();
+
+    // Temperature value above or below the dot (avoid overlap with top)
+    const labelY = y - 9 < padT ? y + 13 : y - 9;
+    ctx.fillStyle = '#ffabab';
+    ctx.fillText(`${Math.round(p.temp)}°`, x, labelY);
+  }
 }
 
+// --- Search ---
+
+// Searches for a location via /api/geocode (Nominatim) and shows results in dropdown
 async function doSearch(q, dropdown) {
   let results = [];
   try {
@@ -619,7 +981,7 @@ async function doSearch(q, dropdown) {
 
   dropdown.innerHTML = '';
   if (!Array.isArray(results) || !results.length) {
-    dropdown.innerHTML = '<div class="no-results">No locations found</div>';
+    dropdown.innerHTML = `<div class="no-results">${t('noResults')}</div>`;
     return;
   }
 
@@ -644,13 +1006,14 @@ async function doSearch(q, dropdown) {
         showPanel(data, { target: { lat: r.lat, lon: r.lon, source: 'search' } });
       } catch (err) {
         hidePanel();
-        flashHint(`Search weather error: ${err.message}`, 4200);
+        flashHint(`${t('searchError')}: ${err.message}`, 4200);
       }
     });
     dropdown.appendChild(item);
   });
 }
 
+// Sets up the search bar: typing triggers a debounced search, clear button resets it
 function initSearch() {
   const input = document.getElementById('search-input');
   const clearBtn = document.getElementById('search-clear');
@@ -675,15 +1038,16 @@ function initSearch() {
   });
 }
 
+// --- Globe rotation (used by screensaver) ---
+// Stops the automatic globe rotation
 function stopRotation() {
   if (rotateTimer) {
     clearInterval(rotateTimer);
     rotateTimer = null;
   }
-  const btn = document.getElementById('btn-rotate');
-  if (btn) btn.classList.remove('active');
 }
 
+// Starts spinning the globe automatically (used during screensaver idle mode)
 function startRotation() {
   if (rotateTimer) return;
   rotateTimer = setInterval(() => {
@@ -695,17 +1059,8 @@ function startRotation() {
   }, ROTATION_TICK_MS);
 }
 
-function toggleRotation() {
-  const btn = document.getElementById('btn-rotate');
-  if (rotateTimer) {
-    stopRotation();
-    if (btn) btn.classList.remove('active');
-  } else {
-    startRotation();
-    if (btn) btn.classList.add('active');
-  }
-}
-
+// --- Camera controls ---
+// Moves the camera to center on a location at a given zoom range
 function focusOn(lat, lon, range = 1_000_000) {
   if (!map) return;
   const zoom = rangeToZoom(range);
@@ -723,6 +1078,9 @@ function zoomOut() {
   map.setZoom(Math.max(2, (map.getZoom() ?? 2) - 1));
 }
 
+// --- City markers on the globe ---
+// Checks if coordinates are close to the currently selected location
+// (used to hide the city marker when it overlaps with the active selection marker)
 function isNearActiveTarget(lat, lon) {
   if (!activeTarget || !Number.isFinite(activeTarget.lat) || !Number.isFinite(activeTarget.lon)) {
     return false;
@@ -731,6 +1089,7 @@ function isNearActiveTarget(lat, lon) {
   return Math.abs(activeTarget.lat - lat) <= 0.08 && Math.abs(activeTarget.lon - lon) <= 0.08;
 }
 
+// Removes all city weather markers from the globe
 function clearCityMarkers() {
   for (const { bubble, icon } of cityPlacemarkMap.values()) {
     if (bubble) bubble.setMap(null);
@@ -739,6 +1098,7 @@ function clearCityMarkers() {
   cityPlacemarkMap.clear();
 }
 
+// Removes the selected location marker from the globe
 function clearActiveMarkers() {
   for (const m of activeMarkerObjects) m.setMap(null);
   activeMarkerObjects = [];
@@ -756,6 +1116,9 @@ function markerPointValue(pointOrNumber, axis, fallback) {
   return Number.isFinite(n) ? n : fallback;
 }
 
+// Creates a billboard marker on the globe (image or canvas) at given coordinates.
+// Returns an object with setMap()/setVisible()/setIcon() methods.
+// zIndex controls rendering order (higher = in front).
 function createImageMarker(lat, lon, imageSource, width, height, anchorX, anchorY, zIndex = 1000, visible = true) {
   if (!map?.viewer || !window.Cesium) {
     return {
@@ -809,20 +1172,27 @@ function createImageMarker(lat, lon, imageSource, width, height, anchorX, anchor
     },
     setIcon(iconOpts) {
       if (removed || !entity.billboard) return;
-      const nextUrl = iconOpts?.url || imageSource;
-      const nextW = markerSizeValue(iconOpts?.scaledSize, width);
-      const nextH = markerSizeValue(iconOpts?.scaledSize?.height, height);
+      const nextImg = iconOpts?.url || imageSource;
       const nextAx = markerPointValue(iconOpts?.anchor, 'x', anchorX);
       const nextAy = markerPointValue(iconOpts?.anchor?.y, 'y', anchorY);
-      entity.billboard.image = nextUrl;
-      entity.billboard.width = nextW;
-      entity.billboard.height = nextH;
-      entity.billboard.scale = undefined;
+      entity.billboard.image = nextImg;
+      // Canvas images use scale=0.5 for 2x rendering; URL images use explicit width/height
+      if (nextImg instanceof HTMLCanvasElement) {
+        entity.billboard.scale = 0.5;
+        entity.billboard.width = undefined;
+        entity.billboard.height = undefined;
+      } else {
+        entity.billboard.width = markerSizeValue(iconOpts?.scaledSize, width);
+        entity.billboard.height = markerSizeValue(iconOpts?.scaledSize?.height, height);
+        entity.billboard.scale = undefined;
+      }
       entity.billboard.pixelOffset = new C.Cartesian2(-nextAx, -nextAy);
     },
   };
 }
 
+// Draws weather markers for all cities on the globe.
+// Each city gets a single pill marker with icon + temperature drawn into one canvas.
 function renderCityMarkers(results) {
   if (!map) return;
   clearCityMarkers();
@@ -842,25 +1212,24 @@ function renderCityMarkers(results) {
     const iconCode = getMeteoIcon(code, day);
     const temp = asFiniteNumber(w?.main?.temp, 0);
     const show = cityTier <= maxTier;
-    // Glass pill: 96x34, anchored at center-bottom (canvas-rendered for crisp text)
+
+    // First render without icon (shows colored dot fallback)
     const labelCanvas = buildCityLabelCanvas({ temp });
     const label = createImageMarker(r.lat, r.lon, labelCanvas, 96, 34, 48, 34, 1100, show);
 
-    // Weather icon: inside the pill, vertically centered with the temp text
-    const iconFallback = buildWeatherIconDataUrl(code, day);
-    const icon = createImageMarker(r.lat, r.lon, iconFallback, 22, 22, 42, 28, 1200, show);
-    resolveWeatherIconSource(iconCode, code, day, (src) => {
-      icon.setIcon({
-        url: src,
-        scaledSize: { width: 22, height: 22 },
-        anchor: { x: 42, y: 28 },
-      });
+    // Load icon and re-render the pill with the icon embedded
+    loadIconImage(iconCode, code, day, (iconImg) => {
+      if (iconImg) {
+        const updated = buildCityLabelCanvas({ temp, iconImg });
+        label.setIcon({ url: updated, scaledSize: { width: 96, height: 34 }, anchor: { x: 48, y: 34 } });
+      }
     });
 
-    cityPlacemarkMap.set(r.name, { bubble: label, icon, tier: cityTier });
+    cityPlacemarkMap.set(r.name, { bubble: label, icon: null, tier: cityTier });
   }
 }
 
+// Shows/hides city markers based on current zoom level (avoids clutter when zoomed out)
 function updateCityTierVisibility() {
   if (!cityPlacemarkMap.size) return;
   const zoom = map?.getZoom?.() ?? 2;
@@ -875,6 +1244,7 @@ function updateCityTierVisibility() {
   }
 }
 
+// Schedules a retry to load city weather if the first attempt failed
 function scheduleCityRetry(delayMs = 30_000) {
   if (cityRetryTimer) return;
   cityRetryTimer = setTimeout(async () => {
@@ -883,6 +1253,7 @@ function scheduleCityRetry(delayMs = 30_000) {
   }, delayMs);
 }
 
+// Fetches weather for all cities from /api/cities and renders their markers on the globe
 async function loadCityMarkers(force = false) {
   try {
     const res = await fetch(force ? '/api/cities?force=true' : '/api/cities', {
@@ -892,7 +1263,7 @@ async function loadCityMarkers(force = false) {
     });
     if (!res.ok) {
       if (!cityWeatherCache.length) {
-        flashHint('City weather unavailable. Check API/network.', 4200);
+        flashHint(t('cityUnavail'), 4200);
         scheduleCityRetry();
       }
       return;
@@ -908,41 +1279,43 @@ async function loadCityMarkers(force = false) {
       return;
     }
     if (!cityWeatherCache.length) {
-      flashHint('City weather unavailable. Check API/network.', 4200);
+      flashHint(t('cityUnavail'), 4200);
       scheduleCityRetry();
     }
   } catch (_) {
     if (!cityWeatherCache.length) {
-      flashHint('City weather unavailable. Check API/network.', 4200);
+      flashHint(t('cityUnavail'), 4200);
       scheduleCityRetry();
     }
   }
 }
 
+// Places a highlighted marker on the globe for the currently selected location
+// Places a single highlighted marker on the globe for the currently selected location.
+// The icon is drawn directly into the tooltip canvas so it always stays aligned.
 function setActiveMarker(lat, lon, temp, owmCode, day, name) {
   if (!map) return;
   clearActiveMarkers();
   const iconCode = getMeteoIcon(owmCode, day);
-  const labelCanvas = buildActiveMarkerCanvas({
-    name: name || 'Selected',
-    temp: asFiniteNumber(temp, 0),
-  });
-  // Compact tooltip: 120x46, anchored at center-bottom (canvas-rendered for crisp text)
-  const label = createImageMarker(lat, lon, labelCanvas, 120, 46, 60, 46, 2200, true);
+  const tempVal = asFiniteNumber(temp, 0);
+  const markerName = name || t('selected');
 
-  // Weather icon: inside tooltip, left of temperature at same vertical level
-  const iconFallback = buildWeatherIconDataUrl(owmCode, day);
-  const icon = createImageMarker(lat, lon, iconFallback, 22, 22, 52, 23, 2300, true);
-  resolveWeatherIconSource(iconCode, owmCode, day, (src) => {
-    icon.setIcon({
-      url: src,
-      scaledSize: { width: 22, height: 22 },
-      anchor: { x: 52, y: 23 },
-    });
+  // First render without icon
+  const labelCanvas = buildActiveMarkerCanvas({ name: markerName, temp: tempVal });
+  const label = createImageMarker(lat, lon, labelCanvas, 130, 46, 65, 46, 2200, true);
+
+  // Load icon and re-render with the icon embedded
+  loadIconImage(iconCode, owmCode, day, (iconImg) => {
+    if (iconImg) {
+      const updated = buildActiveMarkerCanvas({ name: markerName, temp: tempVal, iconImg });
+      label.setIcon({ url: updated, scaledSize: { width: 130, height: 46 }, anchor: { x: 65, y: 46 } });
+    }
   });
-  activeMarkerObjects = [label, icon];
+
+  activeMarkerObjects = [label];
 }
 
+// Called when the user clicks on the globe: zooms in, fetches weather, shows panel
 async function onMapPick(lat, lon, source = 'manual') {
   stopRotation();
   focusOn(lat, lon, Math.max(2_500, (zoomToRange(map?.getZoom?.() ?? 2)) * 0.72));
@@ -952,19 +1325,23 @@ async function onMapPick(lat, lon, source = 'manual') {
     showPanel(data, { target: { lat, lon, source } });
   } catch (err) {
     hidePanel();
-    flashHint(`Weather error: ${err.message}`, 4200);
+    flashHint(`${t('weatherError')}: ${err.message}`, 4200);
   }
 }
 
+// --- Cesium camera helpers ---
+// Wraps longitude to [-180, 180] range
 function normalizeLon(lon) {
   return ((lon % 360) + 540) % 360 - 180;
 }
 
+// Gets the camera altitude (height above the globe in metres)
 function getCameraRange(viewer) {
   const h = viewer?.camera?.positionCartographic?.height;
   return Number.isFinite(h) ? h : HOME_VIEW.range;
 }
 
+// Gets the lat/lon that the camera is currently looking at (center of screen)
 function getCameraCenter(viewer) {
   if (!viewer || !window.Cesium) return { lat: HOME_VIEW.lat, lon: HOME_VIEW.lon };
   const C = window.Cesium;
@@ -1004,6 +1381,7 @@ function getTiltDeg(viewer) {
   return Math.max(5, Math.min(85, Math.abs(p)));
 }
 
+// Moves the Cesium camera to look at a specific lat/lon/altitude with optional heading/tilt
 function setCameraView(viewer, lat, lon, range, headingDeg = null, tiltDeg = null) {
   if (!viewer || !window.Cesium) return;
   const C = window.Cesium;
@@ -1019,6 +1397,7 @@ function setCameraView(viewer, lat, lon, range, headingDeg = null, tiltDeg = nul
   });
 }
 
+// Converts a screen pixel position to lat/lon on the globe surface
 function pickLatLonFromScreen(viewer, pos) {
   if (!viewer || !window.Cesium || !pos) return null;
   const C = window.Cesium;
@@ -1031,6 +1410,9 @@ function pickLatLonFromScreen(viewer, pos) {
   };
 }
 
+// --- Cesium map adapter ---
+// Wraps the Cesium Viewer in a simpler interface (panTo, setZoom, getZoom, addListener, etc.)
+// so the rest of the app doesn't need to know Cesium-specific API details.
 function createCesiumMapAdapter(viewer) {
   const C = window.Cesium;
   const listeners = {
@@ -1117,6 +1499,7 @@ function createCesiumMapAdapter(viewer) {
   };
 }
 
+// Connects globe events to app logic (click->weather, zoom->update markers, drag->stop rotation)
 function bindMapEventHandlers(nextMap) {
   nextMap.addListener('click', async (ev) => {
     if (!ev?.latLng) return;
@@ -1130,6 +1513,12 @@ function bindMapEventHandlers(nextMap) {
   nextMap.addListener('dragstart', stopRotation);
 }
 
+// --- Globe imagery ---
+// Adds satellite imagery to the globe. Tries in order:
+// 1. Esri World Imagery (via local caching proxy on the Pi)
+// 2. CesiumJS built-in NaturalEarthII texture
+// 3. Public OpenStreetMap tiles (last resort)
+// Also adds Esri label overlay (city/road names) on top of satellite imagery.
 async function addBaseImageryLayer(C, viewer) {
   // Esri World Imagery via local caching proxy (tiles stored on Pi after first fetch)
   let baseAdded = false;
@@ -1172,7 +1561,9 @@ async function addBaseImageryLayer(C, viewer) {
   } catch (_) {}
 }
 
-
+// --- Map initialization ---
+// Creates the CesiumJS 3D globe viewer with satellite imagery, dark base color,
+// and camera controls. Blocks right-click context menu on the globe.
 function initMap() {
   const container = document.getElementById('globe-container');
   container.innerHTML = '';
@@ -1216,6 +1607,8 @@ function initMap() {
   setText('map-attrib', '3D globe by CesiumJS | Esri World Imagery');
 }
 
+// --- Geolocation ---
+// Promisified wrapper around the browser's geolocation API
 function getCurrentPosition(options) {
   return new Promise((resolve, reject) => {
     if (!navigator.geolocation) {
@@ -1226,6 +1619,7 @@ function getCurrentPosition(options) {
   });
 }
 
+// Checks if the browser has granted/denied/prompt geolocation permission
 async function geolocationPermissionState() {
   if (!navigator.permissions?.query) return 'unknown';
   try {
@@ -1236,6 +1630,7 @@ async function geolocationPermissionState() {
   }
 }
 
+// Gets the best GPS position available (watches for accuracy improvements up to 13s)
 async function getBestCurrentPosition() {
   try {
     return await new Promise((resolve, reject) => {
@@ -1274,6 +1669,8 @@ async function getBestCurrentPosition() {
   }
 }
 
+// Gets the user's GPS location, flies the camera there, and shows their local weather.
+// Only prompts for permission if user clicked the locate button (userInitiated=true).
 async function locateAndShowUserWeather({ force = false, animate = true, userInitiated = false } = {}) {
   try {
     const permissionState = await geolocationPermissionState();
@@ -1281,11 +1678,11 @@ async function locateAndShowUserWeather({ force = false, animate = true, userIni
       return;
     }
     if (permissionState === 'denied') {
-      flashHint('Location blocked by browser. Allow it in site settings (tune icon).', 5200);
+      flashHint(t('locationBlocked'), 5200);
       return;
     }
 
-    flashHint('Locating your position...');
+    flashHint(t('locating'));
     const pos = await getBestCurrentPosition();
     const lat = pos.coords.latitude;
     const lon = pos.coords.longitude;
@@ -1299,18 +1696,16 @@ async function locateAndShowUserWeather({ force = false, animate = true, userIni
 
     panelLoading();
     const data = await fetchPointWeather(lat, lon, force);
-    // Save as ambient weather for persistent FX
-    const w0 = data?.weather?.[0];
-    ambientWeatherCode = Number.isFinite(Number(w0?.id)) ? Number(w0.id) : 800;
-    ambientWeatherDay = isDaytime(data);
     showPanel(data, { target: { lat, lon, source: 'user' }, force });
-    setText('loc-country', `${data?.sys?.country || ''} | Your location${acc != null ? ` | GPS +/- ${acc} m` : ''}`);
-    flashHint('Live weather updated for your location');
+    setText('loc-country', `${data?.sys?.country || ''} | ${t('yourLocation')}${acc != null ? ` | GPS +/- ${acc} m` : ''}`);
+    flashHint(t('liveUpdated'));
   } catch (err) {
-    flashHint('Location unavailable. Use search or click on the globe.', 4200);
+    flashHint(t('locationUnavail'), 4200);
   }
 }
 
+// --- UI controls ---
+// Connects all buttons (zoom, home, locate, refresh, close, unit toggle) and keyboard shortcuts
 function initControls() {
   const zoomInBtn = document.getElementById('btn-zoom-in');
   const zoomOutBtn = document.getElementById('btn-zoom-out');
@@ -1346,7 +1741,7 @@ function initControls() {
     const btn = refreshBtn;
     btn.classList.add('busy');
     btn.disabled = true;
-    flashHint('Refreshing weather...');
+    flashHint(t('refreshing'));
 
     try {
       if (activeTarget?.lat != null && activeTarget?.lon != null) {
@@ -1357,7 +1752,7 @@ function initControls() {
       }
       await loadCityMarkers(true);
     } catch (err) {
-      flashHint(`Refresh failed: ${err.message}`, 4200);
+      flashHint(`${t('refreshFailed')}: ${err.message}`, 4200);
     } finally {
       refreshInFlight = false;
       btn.classList.remove('busy');
@@ -1373,6 +1768,20 @@ function initControls() {
     if (activeMarkerData) showPanel(activeMarkerData, { target: activeTarget });
     else renderCityMarkers(cityWeatherCache);
   });
+
+  // Language toggle: switch between EN and FR
+  const langBtn = document.getElementById('lang-toggle');
+  if (langBtn) {
+    langBtn.textContent = lang.toUpperCase();
+    langBtn.addEventListener('click', () => {
+      lang = lang === 'en' ? 'fr' : 'en';
+      langBtn.textContent = lang.toUpperCase();
+      applyI18n();
+      // Re-render weather panel and city markers with new language
+      if (activeMarkerData) showPanel(activeMarkerData, { target: activeTarget });
+      renderCityMarkers(cityWeatherCache);
+    });
+  }
 
   window.addEventListener('keydown', e => {
     const tag = (e.target && e.target.tagName) ? e.target.tagName.toLowerCase() : '';
@@ -1401,45 +1810,33 @@ function initControls() {
   });
 }
 
-function initWeatherFX() {
-  const canvas = document.getElementById('weather-canvas');
-  if (!canvas) return;
-  weatherFX = new WeatherFX(canvas);
-  weatherFX.start();
-}
-
+// --- App entry point ---
+// Loads CesiumJS, initializes the globe, sets up UI, loads city weather, tries geolocation
 async function main() {
   const loading = document.getElementById('loading-screen');
   const loaded = await ensureCesiumLoaded();
   if (!loaded || !window.Cesium?.Viewer) {
     if (loading) loading.classList.add('hidden');
-    flashHint('CesiumJS failed to load. Check network and hard refresh (Ctrl+F5).', 7000);
+    flashHint(t('cesiumFail'), 7000);
     return;
   }
 
+  applyI18n();
   initMap();
   initSearch();
   initControls();
-  initWeatherFX();
-
-  flashHint('Click anywhere on the 3D globe for weather', 5000);
+  flashHint(t('clickHint'), 5000);
 
   if (loading) loading.classList.add('hidden');
 
-  // Fetch weather for default location immediately so it shows at startup
-  fetchPointWeather(HOME_VIEW.lat, HOME_VIEW.lon, false).then(data => {
-    const w0 = data?.weather?.[0];
-    ambientWeatherCode = Number.isFinite(Number(w0?.id)) ? Number(w0.id) : 800;
-    ambientWeatherDay = isDaytime(data);
-    if (weatherFX && !activeMarkerData) {
-      weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
-    }
-  }).catch(() => {});
   loadCityMarkers();
   // Then try geolocation to override with user's actual location
   locateAndShowUserWeather({ force: false, animate: true, userInitiated: false });
 }
 
+// --- Screensaver ---
+// After 60s of inactivity: hides UI, zooms in, spins the globe slowly with a clock overlay.
+// Any user interaction (mouse, keyboard, touch) dismisses it and restores the UI.
 function initScreensaver() {
   const ss = document.getElementById('screensaver');
   const clock = document.getElementById('ss-clock');
@@ -1463,15 +1860,11 @@ function initScreensaver() {
     document.querySelector('.controls')?.classList.add('ss-hidden');
     document.getElementById('hint')?.classList.add('ss-hidden');
     document.getElementById('map-attrib')?.classList.add('ss-hidden');
-    // Close panel but keep/restore ambient weather FX during screensaver
     document.getElementById('weather-panel').classList.remove('active');
     clearActiveMarkers();
     activeMarkerData = null;
     activeTarget = null;
     renderCityMarkers(cityWeatherCache);
-    // Hide weather FX canvas entirely for a clean screensaver
-    if (weatherFX) weatherFX.clear();
-    document.getElementById('weather-canvas')?.classList.add('ss-hidden');
     // Keep city markers visible during screensaver to show weather on earth
     updateCityTierVisibility();
     // Zoom closer to the globe so weather markers are clearly visible
@@ -1492,11 +1885,6 @@ function initScreensaver() {
     document.querySelector('.controls')?.classList.remove('ss-hidden');
     document.getElementById('hint')?.classList.remove('ss-hidden');
     document.getElementById('map-attrib')?.classList.remove('ss-hidden');
-    document.getElementById('weather-canvas')?.classList.remove('ss-hidden');
-    // Restore ambient weather FX
-    if (weatherFX && ambientWeatherCode != null) {
-      weatherFX.setWeather(ambientWeatherCode, ambientWeatherDay);
-    }
     // Restore city markers
     updateCityTierVisibility();
     clearTimeout(spinDelayTimer);
