@@ -43,17 +43,6 @@ def env_int(name: str, default: int) -> int:
 # Configuration (from environment / docker-compose.yml)
 # ---------------------------------------------------------------------------
 
-# URL template the *browser* uses to fetch map tiles (CesiumJS)
-TILE_URL_TEMPLATE = os.getenv("TILE_URL_TEMPLATE", "http://localhost:8081/tile/{z}/{x}/{y}.png")
-# URL template the *server* uses when proxying tiles (defaults to same)
-TILE_UPSTREAM_URL_TEMPLATE = os.getenv("TILE_UPSTREAM_URL_TEMPLATE", TILE_URL_TEMPLATE)
-TILE_ATTRIBUTION = os.getenv("TILE_ATTRIBUTION", "(c) OpenStreetMap contributors (self-hosted)")
-# Minimum zoom level sent to CesiumJS (keep low for globe stability)
-TILE_MIN_LEVEL = env_int("TILE_MIN_LEVEL", 0)
-# Zoom level at which the self-hosted tile overlay becomes visible
-TILE_OVERLAY_MIN_ZOOM = env_int("TILE_OVERLAY_MIN_ZOOM", 5)
-# Optional bounding box "west,south,east,north" to restrict tiles to imported region
-TILE_BOUNDS = os.getenv("TILE_BOUNDS", "").strip()
 PORT = env_int("PORT", 3000)
 
 # Directory for caching satellite/label tiles on disk (persistent across restarts)
@@ -111,18 +100,6 @@ def as_int(v: Any) -> int | None:
     except (TypeError, ValueError):
         return None
 
-
-def render_tile_url(template: str, z: int, x: int, y: int) -> str:
-    """Replace {z}/{x}/{y}/{reverseY}/{s} placeholders in a tile URL template."""
-    max_index = (2**z) - 1
-    reverse_y = max_index - y
-    return (
-        template.replace("{z}", str(z))
-        .replace("{x}", str(x))
-        .replace("{y}", str(y))
-        .replace("{reverseY}", str(reverse_y))
-        .replace("{s}", "a")
-    )
 
 
 def iso_utc_to_unix(ts: Any) -> int | None:
@@ -458,41 +435,6 @@ app = FastAPI(
 async def root():
     return FileResponse("public/index.html", headers={"Cache-Control": "no-store"})
 
-
-@app.get("/api/config", summary="Public frontend runtime config")
-async def config():
-    # Values here are intentionally frontend-visible.
-    return {
-        "tile_url_template": TILE_URL_TEMPLATE,
-        "tile_proxy_url_template": "/api/tile/{z}/{x}/{y}.png",
-        "tile_attribution": TILE_ATTRIBUTION,
-        "tile_min_level": TILE_MIN_LEVEL,
-        "tile_overlay_min_zoom": TILE_OVERLAY_MIN_ZOOM,
-        "tile_bounds": TILE_BOUNDS,
-    }
-
-
-@app.get("/api/tile/{z}/{x}/{y}.png", summary="Proxy tile server image")
-async def tile_proxy(z: int, x: int, y: int):
-    if z < 0 or x < 0 or y < 0:
-        raise HTTPException(status_code=400, detail="Invalid tile coordinate")
-
-    url = render_tile_url(TILE_UPSTREAM_URL_TEMPLATE, z, x, y)
-    try:
-        assert _http is not None
-        resp = await _http.get(url, follow_redirects=True)
-    except Exception as e:
-        raise HTTPException(status_code=502, detail=f"Tile upstream unreachable: {e}") from e
-
-    if resp.status_code >= 400:
-        raise HTTPException(status_code=resp.status_code, detail="Tile unavailable")
-
-    content_type = resp.headers.get("content-type", "image/png")
-    return Response(
-        content=resp.content,
-        media_type=content_type,
-        headers={"Cache-Control": "public, max-age=604800"},  # 7 days
-    )
 
 
 @app.get("/api/sat/{layer}/{z}/{x}/{y}", summary="Cached satellite/label tile proxy")

@@ -60,54 +60,12 @@ docker compose up -d --build
 
 Open http://localhost:3000 in your browser.
 
-## Configure
-
-Edit `docker-compose.yml`:
-
-```yaml
-environment:
-  TILE_URL_TEMPLATE: "http://localhost:8081/tile/{z}/{x}/{y}.png"
-  TILE_MIN_LEVEL: 0
-  TILE_OVERLAY_MIN_ZOOM: 5
-  # Optional regional bounds (west,south,east,north), example for Switzerland:
-  # TILE_BOUNDS: "5.9,45.8,10.5,47.9"
-  TILE_ATTRIBUTION: "(c) OpenStreetMap contributors (self-hosted)"
-```
-
-Notes:
-- The globe renderer is CesiumJS.
-- Weather data comes from Open-Meteo (no API key required).
-- `TILE_URL_TEMPLATE` points to your tile endpoint (default browser-direct to `:8081`).
-- `TILE_MIN_LEVEL` should stay low (`0` or `1`) for Cesium stability.
-- `TILE_OVERLAY_MIN_ZOOM` controls when the self-hosted layer is shown (default `5`).
-- `TILE_BOUNDS` can restrict tiles to your imported region and avoids global blue coverage.
-- Self-hosted tile setup for Raspberry Pi is in `tiles/README.md`.
-- When tiles are regional only, the app now shows a built-in low-res global fallback layer until you zoom into imported tile coverage.
-
-## Run
-
-Start everything (tileserver + app) with one command:
-
-```bash
-docker compose up -d --build
-```
-
-Open:
-- http://localhost:3000
-
-Stop:
-
-```bash
-docker compose down
-```
-
 ## Project layout
 
-- `server.py`: FastAPI backend (weather proxy, icon serving, config endpoint)
+- `server.py`: FastAPI backend (weather proxy, icon serving, satellite tile caching)
 - `public/app.js`: globe UI, markers, weather panel
-- `public/icons/`: local weather icon assets
-- `docker-compose.yml`: app + self-hosted tile service
-- `docker-compose.tileserver.yml`: optional standalone tile-service compose
+- `public/icons/`: MeteoSwiss SVG weather icons
+- `docker-compose.yml`: app container config
 
 ## Expose via Cloudflare Tunnel (optional)
 
@@ -117,9 +75,6 @@ Guide: https://developers.cloudflare.com/cloudflare-one/networks/connectors/clou
 
 ## Troubleshooting
 
-- Blank globe: verify `http://localhost:8081/tile/0/0/0.png` is reachable, then hard refresh (`Ctrl+F5`).
-- If loading from another device, set `TILE_URL_TEMPLATE` to `http://<HOST_IP>:8081/tile/{z}/{x}/{y}.png`.
-- If the world stays blue at low zoom, keep `TILE_MIN_LEVEL=0` and increase `TILE_OVERLAY_MIN_ZOOM` (for example `6` or `7`).
-- For regional imports, set `TILE_BOUNDS` to your extract extent.
-- Icons missing: make sure `public/icons` exists in the container.
-- Port conflict: change `3000:3000` / `8081:80` to free ports.
+- Icons missing: make sure `public/icons/` exists in the container with SVG files.
+- Port conflict: change `3000:3000` to a free port in `docker-compose.yml`.
+- Blank globe: hard refresh (`Ctrl+F5`) to clear cached assets.

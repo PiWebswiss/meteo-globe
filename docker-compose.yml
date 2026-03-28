@@ -1,38 +1,9 @@
 services:
-  tileserver:
-    image: overv/openstreetmap-tile-server:2.3.0
-    container_name: meteo-tileserver
-    command: run
-    ports:
-      - "8081:80"       # self-hosted tile endpoint
-    shm_size: "256m"
-    environment:
-      THREADS: 2
-      ALLOW_CORS: enabled
-    volumes:
-      - osm-data:/data/database
-      - osm-tiles:/data/tiles
-    restart: unless-stopped
-
   meteo-globe:
     build: .
-    depends_on:
-      - tileserver
     ports:
-      - "3000:3000"       # browser -> http://localhost:3000
+      - "3000:3000"
     environment:
-      # Self-hosted tiles (default): browser fetches from host port 8081.
-      TILE_URL_TEMPLATE: "http://localhost:8081/tile/{z}/{x}/{y}.png"
-      # Optional: backend proxy upstream (used only if you switch frontend to /api/tile/...).
-      TILE_UPSTREAM_URL_TEMPLATE: "http://tileserver/tile/{z}/{x}/{y}.png"
-      # Cesium minimumLevel should stay small (0-1) for reliability.
-      TILE_MIN_LEVEL: 0
-      # Show self-hosted tile overlay only from this zoom (keeps global fallback visible at world view).
-      TILE_OVERLAY_MIN_ZOOM: 5
-      # Optional regional bounds: "west,south,east,north" in degrees.
-      # TILE_BOUNDS: "5.9,45.8,10.5,47.9"
-      # Visible map attribution string shown in UI.
-      TILE_ATTRIBUTION: "(c) OpenStreetMap contributors (self-hosted)"
       PORT: 3000
     restart: unless-stopped
     volumes:
@@ -42,6 +13,4 @@ services:
       - sat-tiles:/app/tile_cache
 
 volumes:
-  osm-data:
-  osm-tiles:
   sat-tiles:
