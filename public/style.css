@@ -26,6 +26,8 @@ html, body {
   font-family: 'Inter', system-ui, sans-serif;
   color: var(--text);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  text-rendering: optimizeLegibility;
 }
 
 /* â”€â”€â”€ Loading Screen â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
@@ -218,14 +220,13 @@ html, body {
   padding: 16px 20px;
 }
 .hero-icon-wrap {
-  width: 64px; height: 64px; flex-shrink: 0;
+  width: 88px; height: 88px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
 }
-.hero-icon-wrap img {
-  width: 64px; height: 64px; object-fit: contain;
-  image-rendering: -webkit-optimize-contrast;
-  image-rendering: crisp-edges;
+.hero-icon-wrap img, .hero-icon-wrap svg {
+  width: 88px; height: 88px; object-fit: contain;
   filter: drop-shadow(0 4px 20px rgba(45,140,240,0.4));
+  shape-rendering: geometricPrecision;
 }
 .hero-emoji { font-size: 60px; line-height: 1; }
 .hero-right { flex: 1; }
@@ -251,6 +252,7 @@ html, body {
   display: block;
   width: 100%;
   height: 150px;
+  image-rendering: -webkit-optimize-contrast;
 }
 
 /* Forecast */
@@ -285,7 +287,7 @@ html, body {
 .fc-cell:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.14); transform: translateY(-2px); }
 .fc-time { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; font-weight: 500; }
 .fc-icon { height: 36px; display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
-.fc-icon img { width: 36px; height: 36px; object-fit: contain; }
+.fc-icon img, .fc-icon svg { width: 36px; height: 36px; object-fit: contain; shape-rendering: geometricPrecision; }
 .fc-icon span { font-size: 28px; line-height: 1; }
 .fc-temp { font-size: 14px; font-weight: 700; display: flex; gap: 4px; justify-content: center; align-items: baseline; }
 .fc-temp-min { font-size: 11px; font-weight: 500; opacity: 0.6; }
@@ -318,9 +320,10 @@ html, body {
   transition: box-shadow 0.2s;
   overflow: hidden;
 }
-.marker-bubble img {
+.marker-bubble img, .marker-bubble svg {
   width: 36px; height: 36px; object-fit: contain;
   pointer-events: none;
+  shape-rendering: geometricPrecision;
 }
 .marker-bubble .m-emoji { font-size: 26px; line-height: 1; }
 
@@ -494,9 +497,9 @@ html, body {
   .search-box { max-width: 320px; }
   .panel-city { font-size: 20px; }
   .hero-temp { font-size: 44px; }
-  .hero-icon-wrap, .hero-icon-wrap img { width: 56px; height: 56px; }
+  .hero-icon-wrap, .hero-icon-wrap img, .hero-icon-wrap svg { width: 72px; height: 72px; }
   .fc-cell { width: 62px; padding: 8px 4px; }
-  .fc-icon img { width: 30px; height: 30px; }
+  .fc-icon img, .fc-icon svg { width: 30px; height: 30px; }
   .fc-icon { height: 30px; margin-bottom: 4px; }
 }
 
@@ -538,7 +541,7 @@ html, body {
   .panel-city { font-size: 20px; }
   .panel-country { font-size: 12px; }
   .panel-hero { padding: 12px 16px; gap: 10px; }
-  .hero-icon-wrap, .hero-icon-wrap img { width: 52px; height: 52px; }
+  .hero-icon-wrap, .hero-icon-wrap img, .hero-icon-wrap svg { width: 64px; height: 64px; }
   .hero-temp { font-size: 42px; }
   .hero-desc { font-size: 13px; }
   .hero-feels { font-size: 11px; }
@@ -552,7 +555,7 @@ html, body {
   .fc-cell { width: 58px; padding: 8px 4px; border-radius: 10px; }
   .fc-time { font-size: 10px; margin-bottom: 4px; }
   .fc-icon { height: 28px; margin-bottom: 4px; }
-  .fc-icon img { width: 28px; height: 28px; }
+  .fc-icon img, .fc-icon svg { width: 28px; height: 28px; }
   .fc-temp { font-size: 12px; }
   .fc-temp-min { font-size: 10px; }
   .fc-rain { font-size: 8px; }
@@ -574,7 +577,7 @@ html, body {
   .unit-toggle { padding: 4px 8px; font-size: 11px; }
   .panel-city { font-size: 18px; }
   .hero-temp { font-size: 36px; }
-  .hero-icon-wrap, .hero-icon-wrap img { width: 44px; height: 44px; }
+  .hero-icon-wrap, .hero-icon-wrap img, .hero-icon-wrap svg { width: 52px; height: 52px; }
   .fc-cell { width: 52px; }
   .ctrl-btn { width: 34px; height: 34px; }
 }
@@ -598,7 +601,7 @@ html, body {
 @media (max-height: 500px) and (max-width: 900px) {
   #weather-panel { max-height: 70vh; }
   .panel-hero { padding: 8px 16px; }
-  .hero-icon-wrap, .hero-icon-wrap img { width: 52px; height: 52px; }
+  .hero-icon-wrap, .hero-icon-wrap img, .hero-icon-wrap svg { width: 52px; height: 52px; }
   .hero-temp { font-size: 36px; }
   .temp-chart-wrap canvas { height: 100px; }
   .panel-forecast { padding: 8px 12px 10px; }

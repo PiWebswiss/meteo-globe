@@ -448,7 +448,7 @@ function buildCityLabelCanvas({ temp, iconImg }) {
   const tv = asFiniteNumber(temp, 0);
   const color = tempColor(tv);
   const tempTxt = tempBadgeText(tv);
-  const S = 2;
+  const S = Math.max(3, Math.ceil((window.devicePixelRatio || 2) * 1.5));
   const W = 96 * S, H = 34 * S;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -502,7 +502,7 @@ function buildActiveMarkerCanvas({ name, temp, iconImg }) {
   const color = tempColor(tv);
   const tempTxt = tempBadgeText(tv);
   const city = safeCityName(name || t('selected'), 16);
-  const S = 2;
+  const S = Math.max(3, Math.ceil((window.devicePixelRatio || 2) * 1.5));
   const W = 130 * S, H = 46 * S;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -555,7 +555,6 @@ function loadIconImage(iconCode, owmCode, daytime, callback) {
   img.crossOrigin = 'anonymous';
   img.onload = () => callback(img);
   img.onerror = () => {
-    // Try fallback SVG data URL
     const fallback = new Image();
     fallback.src = buildWeatherIconDataUrl(owmCode, daytime);
     fallback.onload = () => callback(fallback);
@@ -641,20 +640,22 @@ function showPanel(data, opts = {}) {
   setText('loc-time', localTime(data));
 
 
-  const img = document.getElementById('hero-icon');
-  const emo = document.getElementById('hero-emoji');
-  img.style.display = 'block';
-  emo.style.display = 'none';
-  img.onload = () => {
-    img.style.display = 'block';
-    emo.style.display = 'none';
-  };
-  img.onerror = () => {
-    img.src = buildWeatherIconDataUrl(code, day);
-    img.style.display = 'block';
-    emo.style.display = 'none';
-  };
-  img.src = `/api/icon/${iconCode}`;
+  // Load weather icon as inline SVG for sharp rendering at any size.
+  // Using fetch + innerHTML instead of <img> because browsers rasterize
+  // SVGs in <img> at their intrinsic size (40x40), causing blur when scaled.
+  const iconWrap = document.getElementById('hero-icon-wrap');
+  fetch(`/api/icon/${iconCode}`)
+    .then(r => r.ok ? r.text() : null)
+    .then(svgText => {
+      if (svgText && svgText.includes('<svg')) {
+        iconWrap.innerHTML = svgText;
+      } else {
+        iconWrap.innerHTML = `<img id="hero-icon" src="${buildWeatherIconDataUrl(code, day)}" alt="Weather icon">`;
+      }
+    })
+    .catch(() => {
+      iconWrap.innerHTML = `<img id="hero-icon" src="${buildWeatherIconDataUrl(code, day)}" alt="Weather icon">`;
+    });
 
   const tempEl = document.getElementById('hero-temp');
   tempEl.textContent = displayTemp(temp);
@@ -732,9 +733,7 @@ function renderForecast(scroll, daily) {
     cell.className = 'fc-cell';
     cell.innerHTML = `
       <div class="fc-time">${dayName}</div>
-      <div class="fc-icon">
-        <img src="/api/icon/${iconCode}" alt="" onerror="this.outerHTML='<span>--</span>'">
-      </div>
+      <div class="fc-icon" data-icon-code="${iconCode}"></div>
       <div class="fc-temp">
         <span style="color:${tempColor(tMax)}">${tMax}°</span>
         <span class="fc-temp-min" style="color:${tempColor(tMin)}">${tMin}°</span>
@@ -742,6 +741,19 @@ function renderForecast(scroll, daily) {
       <div class="fc-rain">${rain}</div>
     `;
     scroll.appendChild(cell);
+
+    // Load inline SVG for crisp rendering at any size
+    const fcIconEl = cell.querySelector('.fc-icon');
+    fetch(`/api/icon/${iconCode}`)
+      .then(r => r.ok ? r.text() : null)
+      .then(svgText => {
+        if (svgText && svgText.includes('<svg')) {
+          fcIconEl.innerHTML = svgText;
+        } else {
+          fcIconEl.innerHTML = '<span>--</span>';
+        }
+      })
+      .catch(() => { fcIconEl.innerHTML = '<span>--</span>'; });
   });
 }
 
@@ -1142,9 +1154,9 @@ function createImageMarker(lat, lon, imageSource, width, height, anchorX, anchor
     disableDepthTestDistance: 0,
   };
   if (isCanvas) {
-    // Canvas is rendered at 2x. Scale 0.5 maps canvas pixels 1:1 to screen pixels.
-    // Cesium keeps the full-res texture — no resampling, no blur.
-    billboardOpts.scale = 0.5;
+    // Canvas is rendered at higher res for sharp text. Scale down to logical size.
+    const S = Math.max(3, Math.ceil((window.devicePixelRatio || 2) * 1.5));
+    billboardOpts.scale = 1 / S;
   } else {
     billboardOpts.width = width;
     billboardOpts.height = height;
@@ -1176,9 +1188,10 @@ function createImageMarker(lat, lon, imageSource, width, height, anchorX, anchor
       const nextAx = markerPointValue(iconOpts?.anchor, 'x', anchorX);
       const nextAy = markerPointValue(iconOpts?.anchor?.y, 'y', anchorY);
       entity.billboard.image = nextImg;
-      // Canvas images use scale=0.5 for 2x rendering; URL images use explicit width/height
+      // Canvas images use scale=1/S for sharp rendering; URL images use explicit width/height
       if (nextImg instanceof HTMLCanvasElement) {
-        entity.billboard.scale = 0.5;
+        const S = Math.max(3, Math.ceil((window.devicePixelRatio || 2) * 1.5));
+        entity.billboard.scale = 1 / S;
         entity.billboard.width = undefined;
         entity.billboard.height = undefined;
       } else {

@@ -18,6 +18,8 @@ I made the app fully responsive for all device sizes. Added CSS media queries fo
 
 I fixed marker icon misalignment. The weather icon was a separate Cesium billboard positioned at the same lat/lon with a pixel offset, which caused the icon to drift away from the tooltip when the camera tilted or rotated. Fix: the icon is now drawn directly into the marker canvas using `loadIconImage()` + `ctx.drawImage()`. Both city pills and active tooltips are now single billboards containing background, icon, and text in one canvas. Removed the unused `resolveWeatherIconSource()` function. The active marker tooltip was widened to 130px to fit icon + city name + temperature side by side.
 
+I replaced all 84 weather icons with the official MeteoSwiss SVG icons downloaded from `https://www.meteoschweiz.admin.ch/static/resources/weather-symbols/{code}.svg`. The old 40x40 PNGs were blurry when upscaled. The official SVGs are vector graphics that scale perfectly at any size. Deleted all PNG files, kept only SVGs. Hero icon restored to 88px. The server already checks `.svg` before `.png`, so the new icons are served automatically via `/api/icon/{code}`.
+
 ## 2026-03-27
 
 I simplified the weather backend to use a single data source. Removed OpenWeatherMap and MeteoSwiss API integrations entirely — the app now uses only Open-Meteo for all weather data (current conditions + forecasts) and Nominatim for geocoding. This eliminates the need for any API key.

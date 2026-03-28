@@ -686,13 +686,13 @@ async def icon(code: int):
         raw, ct = _icon_cache[code]
         return Response(content=raw, media_type=ct, headers={"Cache-Control": "public, max-age=2592000"})
 
-    for ext, ct in ((".svg", "image/svg+xml"), (".png", "image/png")):
-        local_path = os.path.join(ICON_LOCAL_DIR, f"{code}{ext}")
-        if os.path.isfile(local_path):
-            with open(local_path, "rb") as fh:
-                raw = fh.read()
-            _icon_cache[code] = (raw, ct)
-            return Response(content=raw, media_type=ct, headers={"Cache-Control": "public, max-age=2592000"})
+    local_path = os.path.join(ICON_LOCAL_DIR, f"{code}.svg")
+    if os.path.isfile(local_path):
+        with open(local_path, "rb") as fh:
+            raw = fh.read()
+        ct = "image/svg+xml"
+        _icon_cache[code] = (raw, ct)
+        return Response(content=raw, media_type=ct, headers={"Cache-Control": "public, max-age=2592000"})
 
     raise HTTPException(
         status_code=404,
