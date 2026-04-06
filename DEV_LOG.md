@@ -165,32 +165,6 @@ I also bumped frontend cache-busting to `app.js?v=nasa3d29` in `public/index.htm
 
 I migrated the frontend globe engine from Google Maps to CesiumJS so the app can render a true 3D Earth without Google API key restrictions. In `public/app.js`, I replaced the Google loader with a Cesium loader (`unpkg` script + widgets CSS), introduced a Cesium map adapter (click picking, zoom/pan, heading/tilt, drag/zoom events), and switched marker rendering from AdvancedMarkerElement to Cesium billboard entities while keeping existing weather marker logic, city-tier visibility, controls, search, and panel behavior. I also updated default attribution text to CesiumJS/OpenStreetMap and bumped frontend cache-busting to `app.js?v=nasa3d30` in `public/index.html`.
 
-I added self-hosted tile support for CesiumJS so the app can run against a Raspberry Pi tile server without code edits. In `server.py`, `/api/config` now exposes `tile_url_template` and `tile_attribution` from environment (`TILE_URL_TEMPLATE`, `TILE_ATTRIBUTION`). In `public/app.js`, map initialization now reads that runtime config and uses `Cesium.UrlTemplateImageryProvider` (instead of a hard-coded OSM URL), and attribution text is updated from the same config. I also updated `docker-compose.yml` with tile env defaults, added `docker-compose.tileserver.yml` for a local `overv/openstreetmap-tile-server` service, and added `tiles/README.md` with Raspberry Pi import/run steps and MeteoGlobe wiring instructions.
-I also bumped frontend cache-busting to `app.js?v=nasa3d31` in `public/index.html` so the self-hosted tile runtime config path is fetched immediately after restart.
-I set the project defaults to self-hosted tiles. `docker-compose.yml` now points `TILE_URL_TEMPLATE` to `http://localhost:8081/tile/{z}/{x}/{y}.png` with self-hosted attribution text, and `docker-compose.tileserver.yml` now enables `ALLOW_CORS=enabled` for browser/WebGL tile loading across port 3000 -> 8081. I also updated `README.md` and `tiles/README.md` to make the tile-server startup flow explicit (start tileserver first, then MeteoGlobe).
-I normalized tile attribution strings to ASCII-safe text (`(c) OpenStreetMap contributors`) and bumped frontend cache-busting to `app.js?v=nasa3d32` so the updated self-host defaults load immediately.
-I hardened Raspberry Pi reliability for self-hosted tiles by pinning the tile server image to `overv/openstreetmap-tile-server:v2.2.0` (multi-arch release with arm64 support) in `docker-compose.tileserver.yml`, and aligned the import command in `tiles/README.md` to the same pinned tag.
-
-I finalized the Raspberry Pi self-host tile setup. The stack now defaults to self-hosted tiles (`TILE_URL_TEMPLATE=http://localhost:8081/tile/{z}/{x}/{y}.png`) with self-host attribution in `docker-compose.yml`, the tile service compose is pinned to `overv/openstreetmap-tile-server:v2.2.0` (arm64-capable multi-arch release), CORS is enabled for browser tile fetches across ports (`ALLOW_CORS=enabled`), and the Pi runbook/import command in `tiles/README.md` is aligned to the same pinned image tag.
-I updated Docker orchestration for one-command lifecycle management. `docker-compose.yml` now includes both services (`tileserver` + `meteo-globe`) with shared tile volumes and `meteo-globe` depending on `tileserver`, so `docker compose up -d --build` starts the full stack and `docker compose down` stops it. I also updated documentation to include the official Debian Docker install guide (`https://docs.docker.com/engine/install/debian/`) in `README.md` and `tiles/README.md`, and clarified standalone vs all-in-one compose usage.
-
-I added a final documentation pass for operations. The stack is now managed with one command from `docker-compose.yml` (`docker compose up -d --build` / `docker compose down`) because both `tileserver` and `meteo-globe` are defined in the main compose with shared tile volumes and service dependency wiring. I also added the official Docker Engine on Debian installation guide link (`https://docs.docker.com/engine/install/debian/`) to `README.md` and `tiles/README.md` for Raspberry Pi setup clarity.
-
-Follow-up: confirmed and documented again that the project now uses one-command Docker lifecycle (`docker compose up -d --build` / `docker compose down`) from the main compose file, with tileserver and app started together, plus Debian Docker install documentation link maintained in README guides.
-Fixed tile-server image tag mismatch for Raspberry Pi deployment. Docker Hub does not expose `overv/openstreetmap-tile-server:v2.2.0`; the correct tag is `overv/openstreetmap-tile-server:2.2.0`. I updated both compose files and the Pi tile import/run guide accordingly.
-
-I fixed the blue-globe behavior for regional self-hosted datasets. In `public/app.js`, Cesium now uses built-in NaturalEarthII as a global fallback base layer and adds the configured self-hosted tile provider as an overlay. This prevents an empty blue world when z0 tiles are unavailable and keeps detailed local tiles visible in imported regions. I also added a root-tile probe and user hints to distinguish regional coverage (HTTP 404 at z0) from tile-server reachability/CORS problems, updated README notes, and bumped frontend cache-busting to `app.js?v=nasa3d33`.
-
-I improved self-hosted tile diagnostics and remote-browser behavior in the Cesium frontend. In public/app.js, tile URL templates are normalized so localhost/127.0.0.1 can be rewritten to the current page hostname for remote clients, and root tile probing now shows clearer status-based hints (404 regional coverage, HTTP status renderer/import issues, explicit proxy-upstream failure text). I also bumped frontend cache-busting to app.js?v=nasa3d34.
-
-I added an optional backend tile proxy route in server.py at /api/tile/{z}/{x}/{y}.png with runtime config exposure (tile_proxy_url_template) and upstream template support via TILE_UPSTREAM_URL_TEMPLATE, while keeping the default frontend tile mode direct (TILE_URL_TEMPLATE=http://localhost:8081/tile/{z}/{x}/{y}.png) in docker-compose.yml. Documentation was updated to keep direct mode as the default in README.md and tiles/README.md.
-I fixed persistent blue-globe behavior on Raspberry Pi regional tile imports by introducing TILE_MIN_LEVEL runtime control. In server.py, /api/config now exposes tile_min_level from TILE_MIN_LEVEL (default 5). In public/app.js, Cesium UrlTemplateImageryProvider now uses this minimumLevel so low zoom levels render the NaturalEarth fallback instead of low-detail blue self-host tiles, and self-host tiles appear as you zoom in. I also updated docker-compose.yml defaults and docs (README.md, tiles/README.md) and bumped frontend cache-busting to app.js?v=nasa3d35.
-I verified the self-hosted tile setup against official guides and applied a reliability hardening pass for Raspberry Pi exam usage. Based on Cesium UrlTemplateImageryProvider guidance (minimumLevel should remain small), I changed the app to keep TILE_MIN_LEVEL low (default 0) and introduced TILE_OVERLAY_MIN_ZOOM (default 5) to gate when the self-hosted overlay is shown. This avoids full-globe blue overlays from regional imports without using a high minimumLevel. I also added optional TILE_BOUNDS (west,south,east,north) runtime support so regional datasets can be constrained to their actual extent.
-
-I aligned tile-server references with the current official Docker image tag in project configs and docs: overv/openstreetmap-tile-server:2.3.0 (docker-compose.yml, docker-compose.tileserver.yml, tiles/README.md import command and notes). I updated README guidance to prefer TILE_OVERLAY_MIN_ZOOM over high TILE_MIN_LEVEL values, documented TILE_BOUNDS usage, and bumped frontend cache-busting to app.js?v=nasa3d36.
-I added an exam preflight helper script at scripts/exam-check.sh. It validates the running stack with one command (bash scripts/exam-check.sh) by checking app homepage, /api/config, and tile endpoint health (accepting HTTP 200 or HTTP 404 at z0 for regional imports), so Raspberry Pi demo readiness can be confirmed quickly before presentation.
-
-I removed the temporary exam preflight script and its README references to keep operations strictly to docker compose commands only.
 
 ## 2026-03-27
 
@@ -200,7 +174,6 @@ I also fixed the temperature labels on globe markers. `tempBadgeText()` was rend
 
 I replaced the globe imagery with Esri ArcGIS World Imagery (free satellite tiles) to give a Google Earth-like appearance. The `addBaseImageryLayer()` function now tries providers in order: (1) Esri World Imagery satellite, (2) Cesium NaturalEarthII via TMS, (3) public OpenStreetMap tiles. The globe base color remains dark `#0a1628` to prevent any blue flash during async imagery loading. Attribution updated to reflect Esri imagery. Cache-busting bumped to `app.js?v=nasa3d38`.
 
-I removed the self-hosted tile overlay code from `initMap()` entirely (tile template config, tile bounds, probe logic, zoom-based overlay visibility). The app now relies solely on the Esri satellite imagery cascade with NaturalEarthII and public OSM fallbacks.
 
 I redesigned city markers to Google Maps-style labels. City markers are now clean white text with a colored dot and temperature below (no dark bubbles or pill shapes). Active/selected markers use a compact glass card with city name and temperature. Weather icons are positioned next to the label. The old `buildRoundMarkerDataUrl` and `buildNameStripDataUrl` functions were replaced by `buildCityLabelDataUrl` and `buildActiveMarkerDataUrl`.
 
@@ -234,8 +207,6 @@ I replaced SVG data URL markers with Canvas-rendered textures to fix persistent 
 
 I optimized and cleaned up `public/app.js`:
 - Reduced screensaver zoom from `HOME_VIEW.range * 0.4` (too close) to `HOME_VIEW.range * 0.65` (~7.8M m) for a better compromise between showing weather markers and keeping a cinematic globe view.
-- Removed dead tile-overlay code: `normalizeTileTemplateForClient()`, `parseTileBoundsDegrees()`, `renderTemplateTileUrl()`, `probeRootTile()` — all unused since tile overlay was removed in favor of Esri satellite imagery.
-- Removed unused `loadRuntimeConfig()` function and `runtimeConfig` variable — the frontend no longer reads `/api/config` since tile overlay removal.
 - Simplified `fetchPointWeather` from a redundant wrapper function to a `const` alias of `fetchWeatherAt`.
 - Simplified `normalizeLon()` from a while-loop approach to a single modulo expression.
 - Net result: ~67 lines removed, no functional changes beyond the screensaver zoom adjustment.
@@ -282,7 +253,6 @@ Increased cache TTLs across the entire stack to reduce API calls:
 - Geocode search (Nominatim): 1h → 7 days (search results are stable)
 
 **Browser-side (Cache-Control headers):**
-- Map tiles (OSM proxy): 1h → 7 days
 - Satellite/label tiles: 7 days (new)
 - Weather icons: 1 day → 30 days (icons never change)
 - Static assets (images, fonts): 1h → 30 days
