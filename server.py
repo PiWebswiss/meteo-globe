@@ -24,8 +24,6 @@ from pydantic import BaseModel
 
 load_dotenv()
 logger = logging.getLogger("meteo")
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -37,8 +35,6 @@ def env_int(name: str, default: int) -> int:
         return int(str(raw).strip())
     except (TypeError, ValueError):
         return default
-
-
 # ---------------------------------------------------------------------------
 # Configuration (from environment / docker-compose.yml)
 # ---------------------------------------------------------------------------
@@ -66,21 +62,15 @@ _http: httpx.AsyncClient | None = None
 # Nominatim rate-limiter: max 1 request per ~1.1s (their free usage policy)
 _nominatim_last_call: float = 0.0
 _nominatim_lock = asyncio.Lock()
-
-
 def cache_get(key: str) -> Any | None:
     """Return cached data if it exists and hasn't expired, else None."""
     entry = _cache.get(key)
     if entry and time.time() < float(entry["expires_at"]):
         return entry["data"]
     return None
-
-
 def cache_set(key: str, data: Any, ttl: int = 600) -> None:
     """Store data in cache with a time-to-live in seconds."""
     _cache[key] = {"data": data, "expires_at": time.time() + ttl}
-
-
 def as_float(v: Any) -> float | None:
     """Safely convert a value to float, returning None on failure."""
     try:
@@ -89,8 +79,6 @@ def as_float(v: Any) -> float | None:
         return float(v)
     except (TypeError, ValueError):
         return None
-
-
 def as_int(v: Any) -> int | None:
     """Safely convert a value to int, returning None on failure."""
     try:
@@ -99,8 +87,6 @@ def as_int(v: Any) -> int | None:
         return int(v)
     except (TypeError, ValueError):
         return None
-
-
 
 def iso_utc_to_unix(ts: Any) -> int | None:
     """Convert an ISO-8601 UTC timestamp string to a Unix epoch integer."""
@@ -113,60 +99,10 @@ def iso_utc_to_unix(ts: Any) -> int | None:
         return int(dt.timestamp())
     except Exception:
         return None
-
-
-def open_meteo_code_to_owm(code: Any) -> int:
-    """Map an Open-Meteo WMO weather code to the closest OpenWeatherMap code.
-
-    The frontend icon system uses OWM-style codes, so this translation
-    lets us use Open-Meteo data while keeping the existing icon mapping.
-    """
+def wmo_code(code: Any) -> int:
+    """Ensure a WMO weather code is a valid integer, defaulting to 0 (clear sky)."""
     c = as_int(code)
-    if c is None:
-        return 800
-    if c == 0:
-        return 800
-    if c == 1:
-        return 801
-    if c == 2:
-        return 802
-    if c == 3:
-        return 804
-    if c in (45, 48):
-        return 741
-    if c in (51, 53, 55):
-        return 300
-    if c in (56, 57, 66, 67):
-        return 511
-    if c == 61:
-        return 500
-    if c == 63:
-        return 501
-    if c == 65:
-        return 502
-    if c == 71:
-        return 600
-    if c == 73:
-        return 601
-    if c in (75, 77):
-        return 602
-    if c == 80:
-        return 520
-    if c == 81:
-        return 521
-    if c == 82:
-        return 522
-    if c == 85:
-        return 620
-    if c == 86:
-        return 622
-    if c == 95:
-        return 211
-    if c in (96, 99):
-        return 202
-    return 800
-
-
+    return c if c is not None else 0
 def build_open_meteo_forecast(payload: dict[str, Any]) -> dict[str, Any]:
     """Convert Open-Meteo hourly forecast into a simplified list (every 3h, up to 16 slots).
     Also returns an 'hourly' array with every hour's data for the temperature/rain chart."""
@@ -216,7 +152,7 @@ def build_open_meteo_forecast(payload: dict[str, Any]) -> dict[str, Any]:
             {
                 "dt": dt_unix,
                 "main": {"temp": temps[i]},
-                "weather": [{"id": open_meteo_code_to_owm(codes[i]), "description": "forecast"}],
+                "weather": [{"id": wmo_code(codes[i]), "description": "forecast"}],
                 "pop": max(0.0, min(1.0, (as_float(probs[i]) or 0.0) / 100.0)),
             }
         )
@@ -239,12 +175,10 @@ def build_open_meteo_forecast(payload: dict[str, Any]) -> dict[str, Any]:
                 "temp_max": as_float(d_tmax[i]) or 0.0,
                 "temp_min": as_float(d_tmin[i]) or 0.0,
                 "precip": as_float(d_precip[i]) if i < len(d_precip) else 0.0,
-                "code": open_meteo_code_to_owm(d_codes[i]),
+                "code": wmo_code(d_codes[i]),
             })
 
     return {"list": out, "hourly": hourly_data, "daily": daily_out, "utc_offset": utc_offset, "_source": "open-meteo"}
-
-
 # ---------------------------------------------------------------------------
 # External API helpers
 # ---------------------------------------------------------------------------
@@ -269,8 +203,6 @@ async def fetch_json(
     data = resp.json()
     cache_set(cache_key, data, ttl=ttl)
     return data
-
-
 # ---------------------------------------------------------------------------
 # Reverse geocoding (Nominatim / OpenStreetMap)
 # ---------------------------------------------------------------------------
@@ -301,8 +233,6 @@ def _extract_place_name(data: Any) -> tuple[str, str]:
     )
     country = str(address.get("country_code") or "").upper()
     return name, country
-
-
 async def _nominatim_fetch(params: dict[str, Any], cache_key: str, force: bool = False) -> Any:
     """Fetch from Nominatim with rate-limiting (max 1 req/sec) and retry on 429."""
     global _nominatim_last_call
@@ -319,8 +249,6 @@ async def _nominatim_fetch(params: dict[str, Any], cache_key: str, force: bool =
             params=params,
             force=force,
         )
-
-
 async def reverse_geocode_brief(lat: float, lon: float, force: bool = False) -> tuple[str, str]:
     """Return (place_name, country_code) for a lat/lon using Nominatim reverse geocoding."""
     key = f"revgeo_{lat:.3f}_{lon:.3f}"
@@ -336,8 +264,6 @@ async def reverse_geocode_brief(lat: float, lon: float, force: bool = False) -> 
     except Exception as exc:
         logger.warning("reverse_geocode_brief failed for (%s, %s): %s", lat, lon, exc)
         return "Selected location", ""
-
-
 # ---------------------------------------------------------------------------
 # Weather data assembly
 # ---------------------------------------------------------------------------
@@ -381,7 +307,7 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
     pressure = as_float(current.get("surface_pressure"))
     wind_kmh = as_float(current.get("wind_speed_10m"))
     wind_deg = as_float(current.get("wind_direction_10m"))
-    weather_code = open_meteo_code_to_owm(current.get("weather_code"))
+    weather_code = wmo_code(current.get("weather_code"))
     is_day = as_int(current.get("is_day"))
 
     sunrise = dt_unix - 6 * 3600 if is_day == 1 else dt_unix + 6 * 3600
@@ -404,8 +330,6 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
         "name": place_name,
         "visibility": None,
     }
-
-
 # ---------------------------------------------------------------------------
 # FastAPI application setup
 # ---------------------------------------------------------------------------
@@ -417,25 +341,17 @@ async def lifespan(app: FastAPI):
     _http = httpx.AsyncClient(timeout=8.0)
     yield
     await _http.aclose()
-
-
 app = FastAPI(
     title="MeteoGlobe API",
     description="Weather data proxy for the 3D globe frontend",
     lifespan=lifespan,
 )
-
-
 # ---------------------------------------------------------------------------
 # API routes
 # ---------------------------------------------------------------------------
-
-
 @app.get("/", include_in_schema=False)
 async def root():
     return FileResponse("public/index.html", headers={"Cache-Control": "no-store"})
-
-
 
 @app.get("/api/sat/{layer}/{z}/{x}/{y}", summary="Cached satellite/label tile proxy")
 async def sat_tile_proxy(layer: str, z: int, x: int, y: int):
@@ -478,8 +394,6 @@ async def sat_tile_proxy(layer: str, z: int, x: int, y: int):
     content_type = resp.headers.get("content-type", "image/png")
     return Response(content=resp.content, media_type=content_type,
                     headers={"Cache-Control": "public, max-age=604800"})
-
-
 @app.get("/api/weather", summary="Current weather at a coordinate")
 async def weather(lat: float, lon: float, force: bool = False):
     """Return current weather for a given lat/lon (used when clicking the globe)."""
@@ -489,8 +403,6 @@ async def weather(lat: float, lon: float, force: bool = False):
         raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/forecast", summary="48h forecast at a coordinate")
 async def forecast(lat: float, lon: float, force: bool = False):
     om_key = f"om_forecast_{lat:.3f}_{lon:.3f}"
@@ -512,18 +424,12 @@ async def forecast(lat: float, lon: float, force: bool = False):
     if data.get("list"):
         return data
     raise HTTPException(status_code=500, detail="Forecast unavailable")
-
-
 class City(BaseModel):
     name: str
     lat: float
     lon: float
-
-
 class CitiesRequest(BaseModel):
     cities: list[City]
-
-
 @app.post("/api/cities", summary="Weather for a list of cities (parallel fetch)")
 async def cities_weather(body: CitiesRequest, force: bool = False):
     """Fetch current weather for multiple cities in parallel (max 8 concurrent).
@@ -561,8 +467,6 @@ async def cities_weather(body: CitiesRequest, force: bool = False):
 
     results = await asyncio.gather(*[fetch_city(c) for c in body.cities])
     return results
-
-
 @app.get("/api/geocode", summary="Convert city name to lat/lon")
 async def geocode(q: str):
     """Search for a place by name using Nominatim and return matching coordinates."""
@@ -616,8 +520,6 @@ async def geocode(q: str):
         return out
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-
-
 @app.get("/api/icon/{code}", summary="Weather pictogram from local files")
 async def icon(code: int):
     """Serve a weather icon (SVG or PNG) from local assets, with in-memory caching."""
@@ -640,8 +542,6 @@ async def icon(code: int):
         status_code=404,
         detail="Icon file not found locally in public/icons. Rebuild image with committed icon files.",
     )
-
-
 @app.get("/{filename:path}", include_in_schema=False)
 async def public_files(filename: str):
     """Catch-all route to serve static files from the public/ directory."""
@@ -652,8 +552,6 @@ async def public_files(filename: str):
             return FileResponse(path, headers={"Cache-Control": "no-store"})
         return FileResponse(path, headers={"Cache-Control": "public, max-age=2592000"})  # 30 days
     raise HTTPException(status_code=404)
-
-
 # ---------------------------------------------------------------------------
 # Direct execution (development mode with auto-reload)
 # ---------------------------------------------------------------------------

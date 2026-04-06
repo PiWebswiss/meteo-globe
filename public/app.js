@@ -89,22 +89,37 @@ function applyI18n() {
 }
 
 // --- Weather icon mapping ---
-// Maps OpenWeatherMap weather codes to MeteoSwiss icon codes.
+// Maps WMO weather codes directly to MeteoSwiss icon codes.
 // { d: daytime icon, n: nighttime icon }
-const OWM_TO_METEO = {
-  800: { d: 1, n: 101 },
-  801: { d: 2, n: 102 },
-  802: { d: 3, n: 103 },
-  803: { d: 4, n: 104 },
-  804: { d: 5, n: 105 },
-  300: { d: 7, n: 7 }, 301: { d: 7, n: 7 }, 302: { d: 7, n: 7 },
-  500: { d: 7, n: 7 }, 501: { d: 8, n: 8 }, 502: { d: 9, n: 9 }, 503: { d: 9, n: 9 },
-  511: { d: 26, n: 26 },
-  520: { d: 17, n: 17 }, 521: { d: 18, n: 18 }, 522: { d: 19, n: 19 }, 531: { d: 19, n: 19 },
-  600: { d: 13, n: 13 }, 601: { d: 14, n: 14 }, 602: { d: 15, n: 15 },
-  620: { d: 17, n: 17 }, 621: { d: 18, n: 18 }, 622: { d: 15, n: 15 },
-  200: { d: 23, n: 23 }, 201: { d: 20, n: 20 }, 202: { d: 21, n: 21 },
-  741: { d: 25, n: 25 },
+const WMO_TO_METEO = {
+  0:  { d: 1, n: 101 },   // Clear sky
+  1:  { d: 2, n: 102 },   // Mainly clear
+  2:  { d: 3, n: 103 },   // Partly cloudy
+  3:  { d: 5, n: 105 },   // Overcast
+  45: { d: 25, n: 25 },   // Fog
+  48: { d: 25, n: 25 },   // Depositing rime fog
+  51: { d: 7, n: 7 },     // Light drizzle
+  53: { d: 7, n: 7 },     // Moderate drizzle
+  55: { d: 7, n: 7 },     // Dense drizzle
+  56: { d: 26, n: 26 },   // Light freezing drizzle
+  57: { d: 26, n: 26 },   // Dense freezing drizzle
+  61: { d: 7, n: 7 },     // Slight rain
+  63: { d: 8, n: 8 },     // Moderate rain
+  65: { d: 9, n: 9 },     // Heavy rain
+  66: { d: 26, n: 26 },   // Light freezing rain
+  67: { d: 26, n: 26 },   // Heavy freezing rain
+  71: { d: 13, n: 13 },   // Slight snow
+  73: { d: 14, n: 14 },   // Moderate snow
+  75: { d: 15, n: 15 },   // Heavy snow
+  77: { d: 15, n: 15 },   // Snow grains
+  80: { d: 17, n: 17 },   // Slight rain showers
+  81: { d: 18, n: 18 },   // Moderate rain showers
+  82: { d: 19, n: 19 },   // Violent rain showers
+  85: { d: 17, n: 17 },   // Slight snow showers
+  86: { d: 15, n: 15 },   // Heavy snow showers
+  95: { d: 23, n: 23 },   // Thunderstorm
+  96: { d: 20, n: 20 },   // Thunderstorm with slight hail
+  99: { d: 21, n: 21 },   // Thunderstorm with heavy hail
 };
 
 // --- Constants ---
@@ -343,35 +358,30 @@ function cap(s) {
 }
 
 // --- Weather helpers ---
-// Converts an OWM weather code to a MeteoSwiss icon code (used for /api/icon/{code})
-function getMeteoIcon(owmCode, daytime = true) {
-  const m = OWM_TO_METEO[owmCode];
+// Converts a WMO weather code to a MeteoSwiss icon code (used for /api/icon/{code})
+function getMeteoIcon(wmoCode, daytime = true) {
+  const m = WMO_TO_METEO[wmoCode];
   if (m) return daytime ? m.d : m.n;
-  if (owmCode >= 200 && owmCode < 300) return 20;
-  if (owmCode >= 300 && owmCode < 400) return 7;
-  if (owmCode >= 500 && owmCode < 600) return 8;
-  if (owmCode >= 600 && owmCode < 700) return 14;
-  if (owmCode >= 700 && owmCode < 800) return 24;
-  return 1;
+  return daytime ? 1 : 101;
 }
 
-// Returns a short text label for a weather code (used as fallback when icon fails)
-function getWeatherEmoji(owmCode, daytime = true) {
-  if (owmCode >= 200 && owmCode < 300) return 'TS';
-  if (owmCode >= 300 && owmCode < 400) return 'DZ';
-  if (owmCode >= 500 && owmCode < 600) return 'RN';
-  if (owmCode >= 600 && owmCode < 700) return 'SN';
-  if (owmCode >= 700 && owmCode < 800) return 'FG';
-  if (owmCode === 800) return daytime ? 'SUN' : 'MOON';
-  if (owmCode === 801) return 'PCLD';
-  if (owmCode === 802) return 'SCLD';
-  if (owmCode === 803 || owmCode === 804) return 'CLD';
+// Returns a short text label for a WMO weather code (used as fallback when icon fails)
+function getWeatherEmoji(wmoCode, daytime = true) {
+  if (wmoCode === 0) return daytime ? 'SUN' : 'MOON';
+  if (wmoCode === 1) return 'PCLD';
+  if (wmoCode === 2) return 'SCLD';
+  if (wmoCode === 3) return 'CLD';
+  if (wmoCode >= 45 && wmoCode <= 48) return 'FG';
+  if (wmoCode >= 51 && wmoCode <= 67) return 'RN';
+  if (wmoCode >= 71 && wmoCode <= 77) return 'SN';
+  if (wmoCode >= 80 && wmoCode <= 82) return 'RN';
+  if (wmoCode >= 85 && wmoCode <= 86) return 'SN';
+  if (wmoCode >= 95) return 'TS';
   return 'WX';
 }
-
 // Generates an inline SVG data URL as a fallback weather icon
-function buildWeatherIconDataUrl(owmCode, daytime = true) {
-  const txt = getWeatherEmoji(owmCode, daytime);
+function buildWeatherIconDataUrl(wmoCode, daytime = true) {
+  const txt = getWeatherEmoji(wmoCode, daytime);
   const iconText = escapeXml(txt);
   const svg = `\n<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 96 96">\n  <rect x="8" y="8" width="80" height="80" rx="16" fill="#0d1b33"/>\n  <text x="48" y="58" text-anchor="middle" font-size="22" font-family="Inter,Segoe UI,Arial,sans-serif" fill="#ffffff" font-weight="700">${iconText}</text>\n</svg>`;
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
@@ -552,13 +562,13 @@ function buildActiveMarkerCanvas({ name, temp, iconImg }) {
 
 // Preloads a weather icon image and calls back with the Image element.
 // Used to draw icons directly into marker canvases.
-function loadIconImage(iconCode, owmCode, daytime, callback) {
+function loadIconImage(iconCode, wmoCode, daytime, callback) {
   const img = new Image();
   img.crossOrigin = 'anonymous';
   img.onload = () => callback(img);
   img.onerror = () => {
     const fallback = new Image();
-    fallback.src = buildWeatherIconDataUrl(owmCode, daytime);
+    fallback.src = buildWeatherIconDataUrl(wmoCode, daytime);
     fallback.onload = () => callback(fallback);
     fallback.onerror = () => callback(null);
   };
@@ -629,8 +639,8 @@ function panelLoading() {
 
 // Fills and shows the weather panel with data (icon, temp, description, forecast)
 function showPanel(data, opts = {}) {
-  const w0 = data?.weather?.[0] || { id: 800, description: 'weather' };
-  const code = Number.isFinite(Number(w0.id)) ? Number(w0.id) : 800;
+  const w0 = data?.weather?.[0] || { id: 0, description: 'weather' };
+  const code = Number.isFinite(Number(w0.id)) ? Number(w0.id) : 0;
   const day = isDaytime(data);
   const iconCode = getMeteoIcon(code, day);
   const temp = Number.isFinite(data?.main?.temp) ? data.main.temp : 0;
@@ -727,7 +737,7 @@ function renderForecast(scroll, daily) {
     const dayName = idx === 0 ? t('today') : t('dayNames')[dt.getDay()];
     const tMax = Math.round(item.temp_max ?? 0);
     const tMin = Math.round(item.temp_min ?? 0);
-    const code = item.code ?? 800;
+    const code = item.code ?? 0;
     const iconCode = getMeteoIcon(code, true);
     const rain = (item.precip ?? 0) >= 0.1 ? `${item.precip.toFixed(1)} mm` : '';
 
@@ -1220,7 +1230,7 @@ function renderCityMarkers(results) {
     const cityTier = CITY_TIER.get(r.name) ?? 2;
 
     const w = r.weather;
-    const code = w?.weather?.[0]?.id ?? 800;
+    const code = w?.weather?.[0]?.id ?? 0;
     const day = isDaytime(w);
     const iconCode = getMeteoIcon(code, day);
     const temp = asFiniteNumber(w?.main?.temp, 0);
@@ -1306,10 +1316,10 @@ async function loadCityMarkers(force = false) {
 // Places a highlighted marker on the globe for the currently selected location
 // Places a single highlighted marker on the globe for the currently selected location.
 // The icon is drawn directly into the tooltip canvas so it always stays aligned.
-function setActiveMarker(lat, lon, temp, owmCode, day, name) {
+function setActiveMarker(lat, lon, temp, wmoCode, day, name) {
   if (!map) return;
   clearActiveMarkers();
-  const iconCode = getMeteoIcon(owmCode, day);
+  const iconCode = getMeteoIcon(wmoCode, day);
   const tempVal = asFiniteNumber(temp, 0);
   const markerName = name || t('selected');
 
@@ -1318,7 +1328,7 @@ function setActiveMarker(lat, lon, temp, owmCode, day, name) {
   const label = createImageMarker(lat, lon, labelCanvas, 130, 46, 65, 46, 2200, true);
 
   // Load icon and re-render with the icon embedded
-  loadIconImage(iconCode, owmCode, day, (iconImg) => {
+  loadIconImage(iconCode, wmoCode, day, (iconImg) => {
     if (iconImg) {
       const updated = buildActiveMarkerCanvas({ name: markerName, temp: tempVal, iconImg });
       label.setIcon({ url: updated, scaledSize: { width: 130, height: 46 }, anchor: { x: 65, y: 46 } });
