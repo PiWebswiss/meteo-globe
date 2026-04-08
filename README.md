@@ -67,11 +67,12 @@ Open http://localhost:3000 in your browser.
 - `public/icons/`: MeteoSwiss SVG weather icons
 - `docker-compose.yml`: app container config
 
+
 ## Expose via Cloudflare Tunnel (optional)
 
 To make MeteoGlobe accessible over the internet without port forwarding, use a Cloudflare Tunnel:
 
-Guide: https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/
+Guide: [cloudflare-tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/get-started/)
 
 ## Troubleshooting
 

@@ -288,11 +288,8 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
         params={
             "latitude": lat,
             "longitude": lon,
-            "current": (
-                "temperature_2m,apparent_temperature,relative_humidity_2m,"
-                "surface_pressure,wind_speed_10m,wind_direction_10m,weather_code,is_day"
-            ),
-            "timezone": "UTC",
+            "current": "temperature_2m,apparent_temperature,weather_code,is_day",
+            "timezone": "auto",
         },
         force=force,
     )
@@ -300,13 +297,14 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
     if not isinstance(current, dict):
         raise HTTPException(status_code=500, detail="Open-Meteo current block missing")
 
-    dt_unix = iso_utc_to_unix(current.get("time")) or int(time.time())
+    # With timezone=auto, current.time is in the lieu's local time. Convert
+    # back to a real UTC unix timestamp using the offset Open-Meteo returns.
+    utc_offset = as_int(payload.get("utc_offset_seconds")) or 0
+    local_unix = iso_utc_to_unix(current.get("time")) or int(time.time())
+    dt_unix = local_unix - utc_offset
+
     temp = as_float(current.get("temperature_2m"))
     feels_like = as_float(current.get("apparent_temperature"))
-    humidity = as_int(current.get("relative_humidity_2m"))
-    pressure = as_float(current.get("surface_pressure"))
-    wind_kmh = as_float(current.get("wind_speed_10m"))
-    wind_deg = as_float(current.get("wind_direction_10m"))
     weather_code = wmo_code(current.get("weather_code"))
     is_day = as_int(current.get("is_day"))
 
@@ -320,15 +318,11 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
         "main": {
             "temp": temp if temp is not None else 0.0,
             "feels_like": feels_like if feels_like is not None else (temp if temp is not None else 0.0),
-            "humidity": humidity,
-            "pressure": pressure,
         },
-        "wind": {"speed": (wind_kmh if wind_kmh is not None else 0.0) / 3.6, "deg": wind_deg},
         "sys": {"country": country_code, "sunrise": sunrise, "sunset": sunset},
         "dt": dt_unix,
-        "timezone": 0,
+        "timezone": utc_offset,
         "name": place_name,
-        "visibility": None,
     }
 # ---------------------------------------------------------------------------
 # FastAPI application setup
@@ -456,8 +450,7 @@ async def cities_weather(body: CitiesRequest, force: bool = False):
                         "_source": "fallback-default-city",
                         "coord": {"lat": city.lat, "lon": city.lon},
                         "weather": [{"id": 800, "description": "weather"}],
-                        "main": {"temp": approx_temp, "humidity": None, "pressure": None},
-                        "wind": {"speed": 0.0, "deg": None},
+                        "main": {"temp": approx_temp},
                         "sys": {"country": "", "sunrise": now_ts - 6 * 3600, "sunset": now_ts + 6 * 3600},
                         "dt": now_ts,
                         "timezone": 0,
