@@ -168,6 +168,7 @@ def build_open_meteo_forecast(payload: dict[str, Any]) -> dict[str, Any]:
         d_tmin = daily_raw.get("temperature_2m_min", [])
         d_precip = daily_raw.get("precipitation_sum", [])
         d_codes = daily_raw.get("weather_code", [])
+        d_clouds = daily_raw.get("cloud_cover_mean", []) if isinstance(daily_raw.get("cloud_cover_mean"), list) else []
         d_n = min(len(d_times), len(d_tmax), len(d_tmin), len(d_codes))
         for i in range(d_n):
             daily_out.append({
@@ -176,6 +177,7 @@ def build_open_meteo_forecast(payload: dict[str, Any]) -> dict[str, Any]:
                 "temp_min": as_float(d_tmin[i]) or 0.0,
                 "precip": as_float(d_precip[i]) if i < len(d_precip) else 0.0,
                 "code": wmo_code(d_codes[i]),
+                "clouds": as_int(d_clouds[i]) if i < len(d_clouds) else None,
             })
 
     return {"list": out, "hourly": hourly_data, "daily": daily_out, "utc_offset": utc_offset, "_source": "open-meteo"}
@@ -288,7 +290,7 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
         params={
             "latitude": lat,
             "longitude": lon,
-            "current": "temperature_2m,apparent_temperature,weather_code,is_day",
+            "current": "temperature_2m,apparent_temperature,weather_code,is_day,cloud_cover",
             "timezone": "auto",
         },
         force=force,
@@ -307,6 +309,7 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
     feels_like = as_float(current.get("apparent_temperature"))
     weather_code = wmo_code(current.get("weather_code"))
     is_day = as_int(current.get("is_day"))
+    cloud_cover = as_int(current.get("cloud_cover"))
 
     sunrise = dt_unix - 6 * 3600 if is_day == 1 else dt_unix + 6 * 3600
     sunset = dt_unix + 6 * 3600 if is_day == 1 else dt_unix - 6 * 3600
@@ -319,6 +322,7 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
             "temp": temp if temp is not None else 0.0,
             "feels_like": feels_like if feels_like is not None else (temp if temp is not None else 0.0),
         },
+        "clouds": {"all": cloud_cover if cloud_cover is not None else 0},
         "sys": {"country": country_code, "sunrise": sunrise, "sunset": sunset},
         "dt": dt_unix,
         "timezone": utc_offset,
@@ -408,7 +412,7 @@ async def forecast(lat: float, lon: float, force: bool = False):
             "latitude": lat,
             "longitude": lon,
             "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code",
-            "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code",
+            "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,cloud_cover_mean",
             "forecast_days": 7,
             "timezone": "auto",
         },

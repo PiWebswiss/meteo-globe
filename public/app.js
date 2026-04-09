@@ -358,8 +358,23 @@ function cap(s) {
 }
 
 // --- Weather helpers ---
-// Converts a WMO weather code to a MeteoSwiss icon code (used for /api/icon/{code})
-function getMeteoIcon(wmoCode, daytime = true) {
+// Converts a WMO weather code to a MeteoSwiss icon code (used for /api/icon/{code}).
+// When a cloud-cover percentage is provided, codes 0-3 (clear/mainly clear/partly
+// cloudy/overcast) are refined using finer thresholds than the WMO discretization,
+// so the icon better matches the actual sky state.
+function getMeteoIcon(wmoCode, daytime = true, cloudCover = null) {
+  // Refine "clear-ish" codes using cloud cover when available.
+  // WMO codes 0-3 are themselves defined from cloud-cover ranges, but the code
+  // alone loses precision. Using the raw % gives us a more faithful icon choice.
+  if (cloudCover != null && Number.isFinite(cloudCover) && wmoCode >= 0 && wmoCode <= 3) {
+    let refined;
+    if (cloudCover < 13) refined = 0;       // truly clear
+    else if (cloudCover < 38) refined = 1;  // mainly clear
+    else if (cloudCover < 75) refined = 2;  // partly cloudy
+    else refined = 3;                       // overcast
+    const mr = WMO_TO_METEO[refined];
+    if (mr) return daytime ? mr.d : mr.n;
+  }
   const m = WMO_TO_METEO[wmoCode];
   if (m) return daytime ? m.d : m.n;
   return daytime ? 1 : 101;
@@ -642,7 +657,8 @@ function showPanel(data, opts = {}) {
   const w0 = data?.weather?.[0] || { id: 0, description: 'weather' };
   const code = Number.isFinite(Number(w0.id)) ? Number(w0.id) : 0;
   const day = isDaytime(data);
-  const iconCode = getMeteoIcon(code, day);
+  const clouds = Number.isFinite(Number(data?.clouds?.all)) ? Number(data.clouds.all) : null;
+  const iconCode = getMeteoIcon(code, day, clouds);
   const temp = Number.isFinite(data?.main?.temp) ? data.main.temp : 0;
   const feelsLike = Number.isFinite(data?.main?.feels_like) ? data.main.feels_like : temp;
   const tc = tempColor(temp);
@@ -684,7 +700,7 @@ function showPanel(data, opts = {}) {
   }
 
   if (activeTarget?.lat != null && activeTarget?.lon != null) {
-    setActiveMarker(activeTarget.lat, activeTarget.lon, temp, code, day, data.name || '');
+    setActiveMarker(activeTarget.lat, activeTarget.lon, temp, code, day, data.name || '', clouds);
     renderCityMarkers(cityWeatherCache);
   }
 
@@ -738,7 +754,8 @@ function renderForecast(scroll, daily) {
     const tMax = Math.round(item.temp_max ?? 0);
     const tMin = Math.round(item.temp_min ?? 0);
     const code = item.code ?? 0;
-    const iconCode = getMeteoIcon(code, true);
+    const dayClouds = Number.isFinite(Number(item.clouds)) ? Number(item.clouds) : null;
+    const iconCode = getMeteoIcon(code, true, dayClouds);
     const rain = (item.precip ?? 0) >= 0.1 ? `${item.precip.toFixed(1)} mm` : '';
 
     const cell = document.createElement('div');
@@ -1232,7 +1249,8 @@ function renderCityMarkers(results) {
     const w = r.weather;
     const code = w?.weather?.[0]?.id ?? 0;
     const day = isDaytime(w);
-    const iconCode = getMeteoIcon(code, day);
+    const cityClouds = Number.isFinite(Number(w?.clouds?.all)) ? Number(w.clouds.all) : null;
+    const iconCode = getMeteoIcon(code, day, cityClouds);
     const temp = asFiniteNumber(w?.main?.temp, 0);
     const show = cityTier <= maxTier;
 
@@ -1316,10 +1334,10 @@ async function loadCityMarkers(force = false) {
 // Places a highlighted marker on the globe for the currently selected location
 // Places a single highlighted marker on the globe for the currently selected location.
 // The icon is drawn directly into the tooltip canvas so it always stays aligned.
-function setActiveMarker(lat, lon, temp, wmoCode, day, name) {
+function setActiveMarker(lat, lon, temp, wmoCode, day, name, cloudCover = null) {
   if (!map) return;
   clearActiveMarkers();
-  const iconCode = getMeteoIcon(wmoCode, day);
+  const iconCode = getMeteoIcon(wmoCode, day, cloudCover);
   const tempVal = asFiniteNumber(temp, 0);
   const markerName = name || t('selected');
 
