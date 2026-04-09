@@ -1041,7 +1041,8 @@ async function doSearch(q, dropdown) {
       dropdown.innerHTML = '';
       document.getElementById('search-input').value = r.name;
       panelLoading();
-      focusOn(r.lat, r.lon, 900000);
+      stopRotation();
+      flyToLocation(r.lat, r.lon, 900000, 1.8);
       try {
         const data = await fetchPointWeather(r.lat, r.lon);
         showPanel(data, { target: { lat: r.lat, lon: r.lon, source: 'search' } });
@@ -1101,12 +1102,23 @@ function startRotation() {
 }
 
 // --- Camera controls ---
-// Moves the camera to center on a location at a given zoom range
+// Moves the camera to center on a location at a given zoom range (instant, no animation)
 function focusOn(lat, lon, range = 1_000_000) {
   if (!map) return;
   const zoom = rangeToZoom(range);
   map.panTo({ lat, lng: lon });
   map.setZoom(zoom);
+}
+
+// Smoothly animates the camera to a location over `durationSec` seconds.
+// Falls back to an instant focusOn if the underlying map adapter has no flyTo method.
+function flyToLocation(lat, lon, range = 1_000_000, durationSec = 1.8) {
+  if (!map) return;
+  if (typeof map.flyTo === 'function') {
+    map.flyTo({ lat, lng: lon, range, duration: durationSec });
+  } else {
+    focusOn(lat, lon, range);
+  }
 }
 
 function zoomIn() {
@@ -1438,6 +1450,25 @@ function setCameraView(viewer, lat, lon, range, headingDeg = null, tiltDeg = nul
   });
 }
 
+// Smoothly animates the Cesium camera toward a target lat/lon/altitude over `durationSec` seconds.
+// Cancels any in-flight animation before starting a new one so successive calls don't queue up.
+function flyCameraTo(viewer, lat, lon, range, durationSec = 1.6, headingDeg = null, tiltDeg = null) {
+  if (!viewer || !window.Cesium) return;
+  const C = window.Cesium;
+  const h = headingDeg == null ? getHeadingDeg(viewer) : headingDeg;
+  const t = tiltDeg == null ? getTiltDeg(viewer) : tiltDeg;
+  viewer.camera.cancelFlight();
+  viewer.camera.flyTo({
+    destination: C.Cartesian3.fromDegrees(normalizeLon(lon), Math.max(-85, Math.min(85, lat)), Math.max(2_000, range)),
+    orientation: {
+      heading: C.Math.toRadians(h),
+      pitch: C.Math.toRadians(-Math.max(5, Math.min(85, t))),
+      roll: 0,
+    },
+    duration: Math.max(0, durationSec),
+  });
+}
+
 // Converts a screen pixel position to lat/lon on the globe surface
 function pickLatLonFromScreen(viewer, pos) {
   if (!viewer || !window.Cesium || !pos) return null;
@@ -1506,6 +1537,10 @@ function createCesiumMapAdapter(viewer) {
     },
     panTo({ lat, lng }) {
       setCameraView(viewer, lat, lng, getCameraRange(viewer));
+    },
+    flyTo({ lat, lng, range, duration }) {
+      const r = Number.isFinite(range) ? range : getCameraRange(viewer);
+      flyCameraTo(viewer, lat, lng, r, duration);
     },
     setZoom(z) {
       const c = getCameraCenter(viewer);
