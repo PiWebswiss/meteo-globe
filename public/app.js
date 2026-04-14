@@ -473,7 +473,7 @@ function buildCityLabelCanvas({ temp, iconImg }) {
   const tv = asFiniteNumber(temp, 0);
   const color = tempColor(tv);
   const tempTxt = tempBadgeText(tv);
-  const S = Math.max(3, Math.ceil((window.devicePixelRatio || 1) * 2));
+  const S = 2;
   const W = 96 * S, H = 34 * S;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -529,7 +529,7 @@ function buildActiveMarkerCanvas({ name, temp, iconImg }) {
   const color = tempColor(tv);
   const tempTxt = tempBadgeText(tv);
   const city = safeCityName(name || t('selected'), 16);
-  const S = Math.max(3, Math.ceil((window.devicePixelRatio || 1) * 2));
+  const S = 2;
   const W = 130 * S, H = 46 * S;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
@@ -1660,6 +1660,10 @@ function initMap() {
   });
   // Dark base color prevents blue flash while satellite imagery loads
   viewer.scene.globe.baseColor = C.Color.fromCssColorString('#0a1628');
+  // Render at true device pixel resolution (otherwise Cesium renders at CSS
+  // pixels and the browser upscales, blurring marker text on HiDPI screens).
+  viewer.useBrowserRecommendedResolution = false;
+  viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 2);
   // Satellite base layer (Esri World Imagery → NaturalEarthII → public OSM)
   addBaseImageryLayer(C, viewer);
 
