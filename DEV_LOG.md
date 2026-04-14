@@ -265,3 +265,7 @@ Added comprehensive comments and docstrings to `server.py`:
 - Section headers separating logical blocks (helpers, config, caches, external APIs, geocoding, weather assembly, FastAPI setup, routes)
 - Docstrings on every function and API route
 - Inline comments on configuration variables explaining their purpose
+
+### Marker text crispness fix (HiDPI)
+
+Fixed blurry temperature text on city pills and active tooltip markers on high-DPI screens. Root cause was not the marker canvas resolution — it was Cesium's viewer rendering at CSS pixel resolution by default, letting the browser upscale the WebGL output to device pixels (which softens everything on the globe, including our billboard textures). Fix in `initMap()`: set `viewer.useBrowserRecommendedResolution = false` and `viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 2)` so Cesium renders natively at device pixels (clamped to 2x to avoid GPU cost on 3x/4x retina). Marker canvases remain at the original 2x supersampling with `billboard.scale = 0.5` — that was already correct; the blur was upstream. Cache-busting bumped to `app.js?v=svg-icons-5`.
