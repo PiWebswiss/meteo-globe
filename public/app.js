@@ -728,7 +728,6 @@ async function loadForecast(lat, lon, force = false) {
     const res = await fetch(apiPath('/api/forecast', { lat, lon, force }));
     if (!res.ok) throw new Error(await readErrorMessage(res));
     const data = await res.json();
-    const list = data?.list || [];
 
     src.textContent = 'Open-Meteo';
     renderForecast(scroll, data?.daily || []);
@@ -1664,6 +1663,10 @@ function initMap() {
   // pixels and the browser upscales, blurring marker text on HiDPI screens).
   viewer.useBrowserRecommendedResolution = false;
   viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 2);
+  // Only repaint when the scene actually changes (camera, entity, imagery).
+  // Massive GPU/battery win on mobile with no quality loss.
+  viewer.scene.requestRenderMode = true;
+  viewer.scene.maximumRenderTimeChange = Infinity;
   // Satellite base layer (Esri World Imagery → NaturalEarthII → public OSM)
   addBaseImageryLayer(C, viewer);
 

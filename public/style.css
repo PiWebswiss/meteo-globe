@@ -298,47 +298,6 @@ html, body {
   height: 80px; color: var(--text-dimmer); font-size: 13px;
 }
 
-/* â”€â”€â”€ Globe Markers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-.globe-marker {
-  display: flex; flex-direction: column; align-items: center;
-  cursor: pointer; pointer-events: all;
-  transform-origin: center bottom;
-  transition: transform 0.2s;
-  user-select: none;
-}
-.globe-marker:hover { transform: scale(1.12); }
-.globe-marker:hover .marker-bubble { box-shadow: 0 0 28px var(--temp-color, var(--accent)), 0 4px 20px rgba(0,0,0,0.5); }
-
-.marker-bubble {
-  --temp-color: #2d8cf0;
-  width: 52px; height: 52px; border-radius: 50%;
-  background: rgba(8,18,38,0.88);
-  border: 2.5px solid var(--temp-color);
-  backdrop-filter: blur(10px);
-  display: flex; align-items: center; justify-content: center;
-  box-shadow: 0 0 16px var(--temp-color), 0 4px 16px rgba(0,0,0,0.5);
-  transition: box-shadow 0.2s;
-  overflow: hidden;
-}
-.marker-bubble img, .marker-bubble svg {
-  width: 36px; height: 36px; object-fit: contain;
-  pointer-events: none;
-  shape-rendering: geometricPrecision;
-}
-.marker-bubble .m-emoji { font-size: 26px; line-height: 1; }
-
-.marker-temp {
-  font-size: 12px; font-weight: 700; margin-top: 3px;
-  text-shadow: 0 1px 4px rgba(0,0,0,0.9);
-  letter-spacing: -.01em;
-}
-.marker-city {
-  font-size: 10px; color: rgba(255,255,255,0.7); margin-top: 1px;
-  text-shadow: 0 1px 4px rgba(0,0,0,0.9);
-  text-align: center; max-width: 80px;
-  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-}
-
 /* â”€â”€â”€ Globe Controls â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .controls {
   position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
@@ -466,18 +425,6 @@ html, body {
   letter-spacing: 0.13em;
   text-transform: uppercase;
   margin-top: 14px;
-}
-
-/* â”€â”€â”€ Animations â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
-@keyframes pulse-ring {
-  0%   { transform: scale(1); opacity: 0.8; }
-  100% { transform: scale(2.4); opacity: 0; }
-}
-.pulse-ring {
-  position: absolute; inset: -4px; border-radius: 50%;
-  border: 2px solid var(--temp-color, var(--accent));
-  animation: pulse-ring 1.6s ease-out infinite;
-  pointer-events: none;
 }
 
 /* --- Hide Cesium credits/logo ------------------------------------------- */

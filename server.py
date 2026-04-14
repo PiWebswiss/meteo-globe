@@ -437,7 +437,7 @@ async def cities_weather(body: CitiesRequest, force: bool = False):
     """
     sem = asyncio.Semaphore(8)
 
-    async def fetch_city(city: City) -> dict[str, Any]:
+    async def fetch_city(city: City) -> dict[str, Any] | None:
         async with sem:
             try:
                 w = await weather_payload(city.lat, city.lon, force=force, place_name_override=city.name)
@@ -445,25 +445,10 @@ async def cities_weather(body: CitiesRequest, force: bool = False):
                     w["name"] = city.name
                 return {**city.model_dump(), "weather": w}
             except Exception:
-                # deterministic fallback so UI still renders markers
-                approx_temp = round(22.0 - abs(city.lat) * 0.22, 1)
-                now_ts = int(time.time())
-                return {
-                    **city.model_dump(),
-                    "weather": {
-                        "_source": "fallback-default-city",
-                        "coord": {"lat": city.lat, "lon": city.lon},
-                        "weather": [{"id": 800, "description": "weather"}],
-                        "main": {"temp": approx_temp},
-                        "sys": {"country": "", "sunrise": now_ts - 6 * 3600, "sunset": now_ts + 6 * 3600},
-                        "dt": now_ts,
-                        "timezone": 0,
-                        "name": city.name,
-                    },
-                }
+                return None
 
     results = await asyncio.gather(*[fetch_city(c) for c in body.cities])
-    return results
+    return [r for r in results if r is not None]
 @app.get("/api/geocode", summary="Convert city name to lat/lon")
 async def geocode(q: str):
     """Search for a place by name using Nominatim and return matching coordinates."""
