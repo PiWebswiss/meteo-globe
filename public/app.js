@@ -296,14 +296,15 @@ function ensureStylesheetLoaded(href) {
 }
 
 // --- Zoom / range conversion ---
-// Converts camera height (metres) to a Google Maps-style zoom level (2-18)
+// Converts camera height (metres) to a Google Maps-style zoom level (2-18).
+// Anchor: at 5000 m altitude, zoom = 16. Each doubling of altitude loses 1 zoom.
 function rangeToZoom(range) {
   const r = Math.max(2_000, asFiniteNumber(range, HOME_VIEW.range));
   const z = 16 - Math.log2(r / 5_000);
   return Math.max(2, Math.min(18, Math.round(z)));
 }
 
-// Converts a zoom level back to camera height (metres)
+// Inverse of rangeToZoom: zoom level → camera height (metres).
 function zoomToRange(zoom) {
   const z = Math.max(2, Math.min(18, asFiniteNumber(zoom, 2)));
   return 5_000 * (2 ** (16 - z));
@@ -445,9 +446,9 @@ function escapeXml(s) {
 function safeCityName(name, maxLen = 14) {
   return (name || '')
     .toString()
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '')
-    .replace(/[^\x20-\x7E]/g, '')
+    .normalize('NFD')                    // split accented chars into base+diacritic
+    .replace(/[\u0300-\u036f]/g, '')     // drop combining diacritical marks
+    .replace(/[^\x20-\x7E]/g, '')        // keep only printable ASCII
     .replace(/\s+/g, ' ')
     .trim()
     .slice(0, maxLen);
@@ -1382,7 +1383,8 @@ async function onMapPick(lat, lon, source = 'manual') {
 }
 
 // --- Cesium camera helpers ---
-// Wraps longitude to [-180, 180] range
+// Wraps longitude to [-180, 180] range.
+// The +540 trick handles negative inputs correctly across the 180° seam.
 function normalizeLon(lon) {
   return ((lon % 360) + 540) % 360 - 180;
 }
@@ -1440,6 +1442,7 @@ function setCameraView(viewer, lat, lon, range, headingDeg = null, tiltDeg = nul
   const h = headingDeg == null ? getHeadingDeg(viewer) : headingDeg;
   const t = tiltDeg == null ? getTiltDeg(viewer) : tiltDeg;
   viewer.camera.setView({
+    // Clamp latitude to +/-85 (avoid flipping at the poles) and range to >= 2 km (avoid clipping into the globe).
     destination: C.Cartesian3.fromDegrees(normalizeLon(lon), Math.max(-85, Math.min(85, lat)), Math.max(2_000, range)),
     orientation: {
       heading: C.Math.toRadians(h),
@@ -1877,6 +1880,7 @@ function initControls() {
       e.preventDefault();
       stopRotation();
       const zoom = map.getZoom() ?? 2;
+      // Arrow-key pan step shrinks as we zoom in: 20° at z=2, halves per zoom level (floor 0.05°).
       const step = Math.max(0.05, 20 / (2 ** Math.max(0, zoom - 2)));
       const center = map.getCenter?.();
       if (!center) return;

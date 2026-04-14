@@ -1,30 +1,38 @@
-﻿/* â”€â”€â”€ Reset & Base â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
+﻿/*
+  MeteoGlobe stylesheet.
+  Organized as top-to-bottom by UI zone (loading -> topbar -> panel -> controls -> screensaver),
+  followed by a hide-Cesium-credits tweak and two responsive breakpoints (<=900px tablet, <=600px phone).
+  All design tokens live in :root below so both dark-mode and spacing adjustments can be made in one spot.
+*/
+/* --- Reset & Base --- */
 *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
+  /* Design tokens — change these to retheme the whole app */
   --bg: #060b1a;
-  --glass: rgba(8, 16, 38, 0.88);
+  --glass: rgba(8, 16, 38, 0.88);           /* translucent panel background */
   --glass-border: rgba(255,255,255,0.09);
   --glass-hover: rgba(255,255,255,0.05);
-  --accent: #3d9bff;
-  --accent2: #00e5d4;
+  --accent: #3d9bff;                        /* primary accent (cold blue) */
+  --accent2: #00e5d4;                       /* secondary accent (teal) */
   --accent-glow: rgba(61,155,255,0.22);
   --text: #eef3ff;
   --text-dim: #7a90b8;
   --text-dimmer: #3d5070;
   --radius: 20px;
-  --panel-w: 370px;
-  --blur: blur(28px);
+  --panel-w: 370px;                         /* weather panel width (overridden on mobile) */
+  --blur: blur(28px);                       /* backdrop blur for glass effect */
   --shadow: 0 28px 72px rgba(0,0,0,0.7), 0 0 0 1px rgba(255,255,255,0.04);
-  --trans: 0.3s cubic-bezier(0.4,0,0.2,1);
+  --trans: 0.3s cubic-bezier(0.4,0,0.2,1);  /* standard ease for hovers / panel slide */
 }
 
 html, body {
   width: 100%; height: 100%;
-  overflow: hidden;
+  overflow: hidden;                   /* prevent page scroll — the globe handles pan/zoom */
   background: var(--bg);
   font-family: 'Inter', system-ui, sans-serif;
   color: var(--text);
+  /* Font-smoothing hints for crisper UI text on HiDPI screens */
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   text-rendering: optimizeLegibility;
@@ -171,6 +179,7 @@ html, body {
 
 /* â”€â”€â”€ Weather Panel â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 #weather-panel {
+  /* Starts off-screen (left: -420px) and slides in when .active is added */
   position: fixed; top: 76px; left: -420px; z-index: 90;
   width: var(--panel-w);
   max-height: calc(100vh - 90px);
@@ -437,7 +446,9 @@ html, body {
 ::-webkit-scrollbar { width: 4px; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 99px; }
 
-/* --- Responsive: Tablets (601-900px) --- */
+/* --- Responsive breakpoints ---
+   Two tiers: tablets (<=900px) shrink the panel + icons, phones (<=600px) dock
+   the weather panel to the bottom of the screen like a sheet and hide the logo text. */
 @media (max-width: 900px) {
   :root { --panel-w: 320px; }
   .topbar { gap: 10px; padding: 0 14px; }

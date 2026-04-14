@@ -1,11 +1,16 @@
 ﻿<!DOCTYPE html>
+<!-- MeteoGlobe UI shell. All logic lives in app.js; this file only declares
+     the DOM structure that JS queries by id. i18n strings are resolved at
+     runtime from the data-i18n / data-i18n-placeholder attributes. -->
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>MeteoGlobe - Live Weather</title>
+  <!-- Inter font, weights 300-800 (matches the bolds used by the canvas markers) -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+  <!-- ?v= is a cache-buster bumped whenever CSS changes -->
   <link rel="stylesheet" href="style.css?v=svg-icons-1">
 </head>
 <body>
@@ -19,7 +24,7 @@
     </div>
   </div>
 
-  <!-- 3D Globe -->
+  <!-- 3D Globe: Cesium Viewer is mounted into this div by initMap() in app.js -->
   <div id="globe-container"></div>
 
   <!-- Top bar -->

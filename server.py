@@ -54,6 +54,7 @@ _cache: dict[str, dict[str, Any]] = {}
 # Weather icon file cache: code -> (raw_bytes, content_type)
 _icon_cache: dict[int, tuple[bytes, str]] = {}
 ICON_LOCAL_DIR = os.path.join("public", "icons")
+# Weather icon convention: 1-42 = day variants, 101-142 = night variants
 SUPPORTED_ICON_CODES = set(range(1, 43)) | set(range(101, 143))
 
 # Shared HTTP client (created in lifespan)
@@ -93,6 +94,7 @@ def iso_utc_to_unix(ts: Any) -> int | None:
     if not isinstance(ts, str) or not ts:
         return None
     try:
+        # Python <3.11 can't parse a trailing "Z" for UTC — normalize to +00:00
         dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
         if dt.tzinfo is None:
             dt = dt.replace(tzinfo=timezone.utc)
@@ -146,6 +148,7 @@ def build_open_meteo_forecast(payload: dict[str, Any]) -> dict[str, Any]:
         if i % 3 != 0:
             continue
         dt_unix = iso_utc_to_unix(times[i])
+        # Skip slots older than 1h (keep a small grace window around "now")
         if dt_unix is None or dt_unix < now_ts - 3600:
             continue
         out.append(
@@ -153,6 +156,7 @@ def build_open_meteo_forecast(payload: dict[str, Any]) -> dict[str, Any]:
                 "dt": dt_unix,
                 "main": {"temp": temps[i]},
                 "weather": [{"id": wmo_code(codes[i]), "description": "forecast"}],
+                # Convert % probability → 0..1 and clamp in case of bad upstream data
                 "pop": max(0.0, min(1.0, (as_float(probs[i]) or 0.0) / 100.0)),
             }
         )
@@ -311,6 +315,8 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
     is_day = as_int(current.get("is_day"))
     cloud_cover = as_int(current.get("cloud_cover"))
 
+    # Open-Meteo's free tier doesn't expose real sunrise/sunset here, so we
+    # give the frontend a rough +/-6h window around "now" based on is_day.
     sunrise = dt_unix - 6 * 3600 if is_day == 1 else dt_unix + 6 * 3600
     sunset = dt_unix + 6 * 3600 if is_day == 1 else dt_unix - 6 * 3600
 
@@ -433,7 +439,8 @@ async def cities_weather(body: CitiesRequest, force: bool = False):
     """Fetch current weather for multiple cities in parallel (max 8 concurrent).
 
     Used by the frontend to populate city marker bubbles on the globe.
-    Falls back to approximate temperature if a city's API call fails.
+    If a city's API call fails it is silently dropped from the result so the
+    other markers still render.
     """
     sem = asyncio.Semaphore(8)
 
