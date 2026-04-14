@@ -1662,10 +1662,11 @@ function initMap() {
   });
   // Dark base color prevents blue flash while satellite imagery loads
   viewer.scene.globe.baseColor = C.Color.fromCssColorString('#0a1628');
-  // Render at true device pixel resolution (otherwise Cesium renders at CSS
-  // pixels and the browser upscales, blurring marker text on HiDPI screens).
+  // Mobile GPUs choke on retina-scale Cesium rendering + sun-lit shader.
+  // Cap resolution and skip lighting on touch devices to keep things smooth.
+  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
   viewer.useBrowserRecommendedResolution = false;
-  viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 2);
+  viewer.resolutionScale = isMobile ? 1 : Math.min(window.devicePixelRatio || 1, 2);
   // Only repaint when the scene actually changes (camera, entity, imagery).
   // Massive GPU/battery win on mobile with no quality loss.
   viewer.scene.requestRenderMode = true;
@@ -1673,7 +1674,7 @@ function initMap() {
   // Satellite base layer (Esri World Imagery → NaturalEarthII → public OSM)
   addBaseImageryLayer(C, viewer);
 
-  viewer.scene.globe.enableLighting = true;
+  viewer.scene.globe.enableLighting = !isMobile;
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2_000;
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000;
   viewer.scene.screenSpaceCameraController.enableTilt = true;

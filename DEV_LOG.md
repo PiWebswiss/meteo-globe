@@ -269,3 +269,29 @@ Added comprehensive comments and docstrings to `server.py`:
 ### Marker text crispness fix (HiDPI)
 
 Fixed blurry temperature text on city pills and active tooltip markers on high-DPI screens. Root cause was not the marker canvas resolution — it was Cesium's viewer rendering at CSS pixel resolution by default, letting the browser upscale the WebGL output to device pixels (which softens everything on the globe, including our billboard textures). Fix in `initMap()`: set `viewer.useBrowserRecommendedResolution = false` and `viewer.resolutionScale = Math.min(window.devicePixelRatio || 1, 2)` so Cesium renders natively at device pixels (clamped to 2x to avoid GPU cost on 3x/4x retina). Marker canvases remain at the original 2x supersampling with `billboard.scale = 0.5` — that was already correct; the blur was upstream. Cache-busting bumped to `app.js?v=svg-icons-5`.
+
+### On-demand rendering for battery / mobile
+
+Enabled `viewer.scene.requestRenderMode = true` and `maximumRenderTimeChange = Infinity` in `initMap()` so Cesium only repaints when the scene actually changes (camera move, entity update, imagery load) instead of running a steady 60 fps loop. Big GPU and battery win on phones when the globe sits idle (panel open, reading forecast). Camera rotations (including screensaver spin) and marker updates both trigger re-renders automatically, so behavior is unchanged. Cache-busting bumped to `app.js?v=svg-icons-6`.
+
+### Cities endpoint cleanup — remove dead latitude fallback
+
+Removed the latitude-based temperature approximation in `/api/cities` ([server.py:438-450](server.py#L438-L450)). Open-Meteo has global grid coverage so the fallback only fired on network panics, and even then it was producing a fake reading rather than a visible error. Failed cities are now filtered out of the response; `renderCityMarkers` already skips entries without `weather`, so nothing breaks visually. If every city fails the result is an empty list, which the frontend handles via the existing `cityUnavail` hint + retry path. Net -17 lines, no behavior change under normal conditions, no more "fake" temperatures in the UI.
+
+### Dead code sweep
+
+- Removed unused `.globe-marker`, `.marker-bubble`, `.marker-temp`, `.marker-city`, `.m-emoji` CSS block in `public/style.css` — left over from the pre-canvas DOM marker implementation, no longer referenced anywhere.
+- Removed unused `@keyframes pulse-ring` and `.pulse-ring` class from the same file.
+- Removed unused local `const list = data?.list || []` in `loadForecast()` ([app.js:731](public/app.js#L731)).
+
+### Line-by-line comment pass
+
+Added targeted inline comments to `server.py`, `public/app.js`, `public/index.html`, and `public/style.css` for non-obvious lines (MeteoSwiss icon code ranges, Python ISO-8601 `Z`-suffix quirk, forecast grace window, probability clamping, rough sunrise/sunset approximation, zoom↔range formula anchor, Unicode combining-mark strip in `safeCityName`, longitude-normalization `+540` trick, latitude/range clamps, design-token comments in `:root`, responsive-breakpoint intent). Skipped self-explanatory lines to avoid clutter.
+
+### Mobile lag + sheet polish
+
+Fixed heavy lag on phones and tightened the weather panel on small screens.
+
+- `initMap()` now detects touch devices (`navigator.userAgent` regex) and drops `resolutionScale` to 1 and disables `enableLighting` on mobile. On an iPhone with DPR=3 this is ~9x fewer fragment-shader invocations than desktop-quality settings plus no sun-angle shader cost — interactions feel smooth again.
+- `public/style.css` phone breakpoint (max-width 600px): panel now caps at `min(68vh, 100vh - 140px)` so ~1/3 of the globe stays visible behind the sheet, respects `env(safe-area-inset-bottom)` for notched phones, gets a proper drag-handle pill at the top (`#weather-panel::after`), rounded on all four corners, and sits with a small 8/10 px gap from the screen edges for a sheet feel rather than a flush full-width slab.
+- Cache-busting bumped to `app.js?v=svg-icons-7`, `style.css?v=svg-icons-2`.
