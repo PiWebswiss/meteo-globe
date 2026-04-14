@@ -465,21 +465,28 @@ html, body {
 @media (max-width: 600px) {
   :root { --panel-w: calc(100vw - 24px); }
 
-  /* Panel slides up from the bottom as a sheet, docked just below the topbar.
-     Fills most of the screen while leaving the topbar visible above it. */
+  /* Panel is a bottom sheet: anchored top-and-bottom so it naturally fills the
+     gap between the 54 px topbar and the floating controls bar. Safe-area-inset
+     handles the iOS home indicator without letting the sheet clip behind it. */
   #weather-panel {
-    top: auto;
-    bottom: -110%;
+    top: 60px;
+    bottom: calc(100vh);                       /* off-screen below when inactive */
     left: 8px; right: 8px;
     width: auto;
-    height: calc(100vh - 64px - env(safe-area-inset-bottom, 0px) - 12px);
+    height: auto;
     max-height: none;
     padding-bottom: env(safe-area-inset-bottom, 0);
     border-radius: 22px 22px 18px 18px;
     overflow-y: auto;
     box-shadow: 0 -12px 40px rgba(0,0,0,0.55), var(--shadow);
+    transition: top var(--trans), bottom var(--trans), opacity var(--trans);
+    opacity: 0;
   }
-  #weather-panel.active { bottom: 8px; left: 8px; }
+  #weather-panel.active {
+    bottom: calc(62px + env(safe-area-inset-bottom, 0px));
+    left: 8px;
+    opacity: 1;
+  }
 
   /* Mobile drag-handle pill: repurpose ::before (accent gradient line on desktop)
      as a small centered grab bar at the top of the sheet. */
