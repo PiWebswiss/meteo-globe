@@ -473,10 +473,11 @@ function buildCityLabelCanvas({ temp, iconImg }) {
   const tv = asFiniteNumber(temp, 0);
   const color = tempColor(tv);
   const tempTxt = tempBadgeText(tv);
-  const S = 2;
+  const S = Math.max(3, Math.ceil((window.devicePixelRatio || 1) * 2));
   const W = 96 * S, H = 34 * S;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
+  c._superSampling = S;
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
@@ -528,10 +529,11 @@ function buildActiveMarkerCanvas({ name, temp, iconImg }) {
   const color = tempColor(tv);
   const tempTxt = tempBadgeText(tv);
   const city = safeCityName(name || t('selected'), 16);
-  const S = 2;
+  const S = Math.max(3, Math.ceil((window.devicePixelRatio || 1) * 2));
   const W = 130 * S, H = 46 * S;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
+  c._superSampling = S;
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
@@ -1195,8 +1197,7 @@ function createImageMarker(lat, lon, imageSource, width, height, anchorX, anchor
     disableDepthTestDistance: 0,
   };
   if (isCanvas) {
-    // Canvas is rendered at 2x. Scale 0.5 maps canvas pixels 1:1 to screen pixels.
-    billboardOpts.scale = 0.5;
+    billboardOpts.scale = 1 / (imageSource._superSampling || 2);
   } else {
     billboardOpts.width = width;
     billboardOpts.height = height;
@@ -1228,9 +1229,8 @@ function createImageMarker(lat, lon, imageSource, width, height, anchorX, anchor
       const nextAx = markerPointValue(iconOpts?.anchor, 'x', anchorX);
       const nextAy = markerPointValue(iconOpts?.anchor?.y, 'y', anchorY);
       entity.billboard.image = nextImg;
-      // Canvas images use scale=0.5 for 2x rendering; URL images use explicit width/height
       if (nextImg instanceof HTMLCanvasElement) {
-        entity.billboard.scale = 0.5;
+        entity.billboard.scale = 1 / (nextImg._superSampling || 2);
         entity.billboard.width = undefined;
         entity.billboard.height = undefined;
       } else {
