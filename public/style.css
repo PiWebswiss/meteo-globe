@@ -260,7 +260,7 @@ html, body {
 .temp-chart-wrap canvas {
   display: block;
   width: 100%;
-  height: 150px;
+  height: 170px;
   image-rendering: -webkit-optimize-contrast;
 }
 

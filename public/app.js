@@ -830,7 +830,7 @@ function renderTempChart(hourly) {
   // High-DPI canvas
   const dpr = window.devicePixelRatio || 1;
   const W = wrap.clientWidth;
-  const H = 150;
+  const H = 170;
   canvas.width = W * dpr;
   canvas.height = H * dpr;
   canvas.style.width = W + 'px';
@@ -841,8 +841,8 @@ function renderTempChart(hourly) {
   // Layout zones:
   // Top area: temperature curve (padT to rainTop)
   // Bottom area: rain bars (rainTop to H - padB)
-  // Time labels: below everything
-  const padL = 30, padR = 30, padT = 18, padB = 18;
+  // Time labels are drawn inside the extra padB room.
+  const padL = 30, padR = 30, padT = 18, padB = 30;
   const rainZoneH = 32; // height of the rain bar area
   const gap = 6;        // gap between temp curve and rain bars
   const tempBot = H - padB - rainZoneH - gap;
@@ -988,12 +988,15 @@ function renderTempChart(hourly) {
   }
 
   // --- Time labels at bottom (every 3h) ---
-  ctx.font = '600 9px Inter, Arial, sans-serif';
+  ctx.font = '600 10px Inter, Arial, sans-serif';
   ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(255,255,255,0.45)';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(255,255,255,0.55)';
+  const labelY = rainBot + 14;  // centered in the enlarged bottom padding
   for (let h = 0; h <= 23; h += 3) {
-    ctx.fillText(`${h.toString().padStart(2, '0')}h`, xOf(h), H - 4);
+    ctx.fillText(`${h.toString().padStart(2, '0')}h`, xOf(h), labelY);
   }
+  ctx.textBaseline = 'alphabetic';
 
   // --- Temperature value labels on curve (every 3h) ---
   ctx.font = '700 9px Inter, Arial, sans-serif';
