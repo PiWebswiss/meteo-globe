@@ -54,8 +54,8 @@ _cache: dict[str, dict[str, Any]] = {}
 # Weather icon file cache: code -> (raw_bytes, content_type)
 _icon_cache: dict[int, tuple[bytes, str]] = {}
 ICON_LOCAL_DIR = os.path.join("public", "icons")
-# Weather icon convention: 1-42 = day variants, 43-84 = night variants
-SUPPORTED_ICON_CODES = set(range(1, 85))
+# Weather icon convention: 1-42 = day variants, 101-142 = night variants
+SUPPORTED_ICON_CODES = set(range(1, 43)) | set(range(101, 143))
 
 # Shared HTTP client (created in lifespan)
 _http: httpx.AsyncClient | None = None
@@ -315,6 +315,11 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
     is_day = as_int(current.get("is_day"))
     cloud_cover = as_int(current.get("cloud_cover"))
 
+    # Open-Meteo's free tier doesn't expose real sunrise/sunset here, so we
+    # give the frontend a rough +/-6h window around "now" based on is_day.
+    sunrise = dt_unix - 6 * 3600 if is_day == 1 else dt_unix + 6 * 3600
+    sunset = dt_unix + 6 * 3600 if is_day == 1 else dt_unix - 6 * 3600
+
     return {
         "_source": "open-meteo-current",
         "coord": {"lat": lat, "lon": lon},
@@ -324,8 +329,7 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
             "feels_like": feels_like if feels_like is not None else (temp if temp is not None else 0.0),
         },
         "clouds": {"all": cloud_cover if cloud_cover is not None else 0},
-        "sys": {"country": country_code},
-        "is_day": bool(is_day == 1),
+        "sys": {"country": country_code, "sunrise": sunrise, "sunset": sunset},
         "dt": dt_unix,
         "timezone": utc_offset,
         "name": place_name,
@@ -415,7 +419,7 @@ async def forecast(lat: float, lon: float, force: bool = False):
             "longitude": lon,
             "hourly": "temperature_2m,precipitation_probability,precipitation,weather_code",
             "daily": "temperature_2m_max,temperature_2m_min,precipitation_sum,weather_code,cloud_cover_mean",
-            "forecast_days": 8,  # today + 7 upcoming (frontend skips today in the daily strip)
+            "forecast_days": 7,
             "timezone": "auto",
         },
         force=force,

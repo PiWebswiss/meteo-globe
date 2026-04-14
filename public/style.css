@@ -260,7 +260,7 @@ html, body {
 .temp-chart-wrap canvas {
   display: block;
   width: 100%;
-  height: 170px;
+  height: 150px;
   image-rendering: -webkit-optimize-contrast;
 }
 
@@ -295,11 +295,11 @@ html, body {
 }
 .fc-cell:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.14); transform: translateY(-2px); }
 .fc-time { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; font-weight: 500; }
-.fc-icon { height: 48px; display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
-.fc-icon img, .fc-icon svg { width: 48px; height: 48px; object-fit: contain; shape-rendering: geometricPrecision; }
-.fc-icon span { font-size: 34px; line-height: 1; }
+.fc-icon { height: 36px; display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
+.fc-icon img, .fc-icon svg { width: 36px; height: 36px; object-fit: contain; shape-rendering: geometricPrecision; }
+.fc-icon span { font-size: 28px; line-height: 1; }
 .fc-temp { font-size: 14px; font-weight: 700; display: flex; gap: 4px; justify-content: center; align-items: baseline; }
-.fc-temp-min { font-size: 11px; font-weight: 600; }
+.fc-temp-min { font-size: 11px; font-weight: 500; opacity: 0.6; }
 .fc-rain { font-size: 9px; color: #5ab4ff; margin-top: 2px; min-height: 14px; }
 
 .forecast-placeholder {
@@ -457,36 +457,29 @@ html, body {
   .hero-temp { font-size: 44px; }
   .hero-icon-wrap, .hero-icon-wrap img, .hero-icon-wrap svg { width: 72px; height: 72px; }
   .fc-cell { width: 62px; padding: 8px 4px; }
-  .fc-icon img, .fc-icon svg { width: 40px; height: 40px; }
-  .fc-icon { height: 40px; margin-bottom: 4px; }
+  .fc-icon img, .fc-icon svg { width: 30px; height: 30px; }
+  .fc-icon { height: 30px; margin-bottom: 4px; }
 }
 
 /* --- Responsive: Phones (max 600px) --- */
 @media (max-width: 600px) {
   :root { --panel-w: calc(100vw - 24px); }
 
-  /* Panel is a bottom sheet: anchored top-and-bottom so it naturally fills the
-     gap between the 54 px topbar and the floating controls bar. Safe-area-inset
-     handles the iOS home indicator without letting the sheet clip behind it. */
+  /* Panel slides up from the bottom as a sheet, docked just below the topbar.
+     Fills most of the screen while leaving the topbar visible above it. */
   #weather-panel {
-    top: 60px;
-    bottom: calc(100vh);                       /* off-screen below when inactive */
+    top: auto;
+    bottom: -110%;
     left: 8px; right: 8px;
     width: auto;
-    height: auto;
+    height: calc(100vh - 64px - env(safe-area-inset-bottom, 0px) - 12px);
     max-height: none;
     padding-bottom: env(safe-area-inset-bottom, 0);
     border-radius: 22px 22px 18px 18px;
     overflow-y: auto;
     box-shadow: 0 -12px 40px rgba(0,0,0,0.55), var(--shadow);
-    transition: top var(--trans), bottom var(--trans), opacity var(--trans);
-    opacity: 0;
   }
-  #weather-panel.active {
-    bottom: calc(62px + env(safe-area-inset-bottom, 0px));
-    left: 8px;
-    opacity: 1;
-  }
+  #weather-panel.active { bottom: 8px; left: 8px; }
 
   /* Mobile drag-handle pill: repurpose ::before (accent gradient line on desktop)
      as a small centered grab bar at the top of the sheet. */
@@ -540,8 +533,8 @@ html, body {
   .panel-forecast { padding: 10px 12px 12px; }
   .fc-cell { width: 58px; padding: 8px 4px; border-radius: 10px; }
   .fc-time { font-size: 10px; margin-bottom: 4px; }
-  .fc-icon { height: 38px; margin-bottom: 4px; }
-  .fc-icon img, .fc-icon svg { width: 38px; height: 38px; }
+  .fc-icon { height: 28px; margin-bottom: 4px; }
+  .fc-icon img, .fc-icon svg { width: 28px; height: 28px; }
   .fc-temp { font-size: 12px; }
   .fc-temp-min { font-size: 10px; }
   .fc-rain { font-size: 8px; }

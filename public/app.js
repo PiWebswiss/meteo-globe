@@ -89,38 +89,37 @@ function applyI18n() {
 }
 
 // --- Weather icon mapping ---
-// Maps WMO weather codes directly to our icon codes.
-// Day variants live in 1-42; night variants are shifted by +42 (so 1..42 -> 43..84).
+// Maps WMO weather codes directly to MeteoSwiss icon codes.
 // { d: daytime icon, n: nighttime icon }
 const WMO_TO_METEO = {
-  0:  { d: 1,  n: 43 },   // Clear sky
-  1:  { d: 2,  n: 44 },   // Mainly clear
-  2:  { d: 3,  n: 45 },   // Partly cloudy
-  3:  { d: 5,  n: 47 },   // Overcast
-  45: { d: 25, n: 67 },   // Fog
-  48: { d: 25, n: 67 },   // Depositing rime fog
-  51: { d: 7,  n: 49 },   // Light drizzle
-  53: { d: 7,  n: 49 },   // Moderate drizzle
-  55: { d: 7,  n: 49 },   // Dense drizzle
-  56: { d: 26, n: 68 },   // Light freezing drizzle
-  57: { d: 26, n: 68 },   // Dense freezing drizzle
-  61: { d: 7,  n: 49 },   // Slight rain
-  63: { d: 8,  n: 50 },   // Moderate rain
-  65: { d: 9,  n: 51 },   // Heavy rain
-  66: { d: 26, n: 68 },   // Light freezing rain
-  67: { d: 26, n: 68 },   // Heavy freezing rain
-  71: { d: 13, n: 55 },   // Slight snow
-  73: { d: 14, n: 56 },   // Moderate snow
-  75: { d: 15, n: 57 },   // Heavy snow
-  77: { d: 15, n: 57 },   // Snow grains
-  80: { d: 17, n: 59 },   // Slight rain showers
-  81: { d: 18, n: 60 },   // Moderate rain showers
-  82: { d: 19, n: 61 },   // Violent rain showers
-  85: { d: 17, n: 59 },   // Slight snow showers
-  86: { d: 15, n: 57 },   // Heavy snow showers
-  95: { d: 23, n: 65 },   // Thunderstorm
-  96: { d: 20, n: 62 },   // Thunderstorm with slight hail
-  99: { d: 21, n: 63 },   // Thunderstorm with heavy hail
+  0:  { d: 1, n: 101 },   // Clear sky
+  1:  { d: 2, n: 102 },   // Mainly clear
+  2:  { d: 3, n: 103 },   // Partly cloudy
+  3:  { d: 5, n: 105 },   // Overcast
+  45: { d: 25, n: 25 },   // Fog
+  48: { d: 25, n: 25 },   // Depositing rime fog
+  51: { d: 7, n: 7 },     // Light drizzle
+  53: { d: 7, n: 7 },     // Moderate drizzle
+  55: { d: 7, n: 7 },     // Dense drizzle
+  56: { d: 26, n: 26 },   // Light freezing drizzle
+  57: { d: 26, n: 26 },   // Dense freezing drizzle
+  61: { d: 7, n: 7 },     // Slight rain
+  63: { d: 8, n: 8 },     // Moderate rain
+  65: { d: 9, n: 9 },     // Heavy rain
+  66: { d: 26, n: 26 },   // Light freezing rain
+  67: { d: 26, n: 26 },   // Heavy freezing rain
+  71: { d: 13, n: 13 },   // Slight snow
+  73: { d: 14, n: 14 },   // Moderate snow
+  75: { d: 15, n: 15 },   // Heavy snow
+  77: { d: 15, n: 15 },   // Snow grains
+  80: { d: 17, n: 17 },   // Slight rain showers
+  81: { d: 18, n: 18 },   // Moderate rain showers
+  82: { d: 19, n: 19 },   // Violent rain showers
+  85: { d: 17, n: 17 },   // Slight snow showers
+  86: { d: 15, n: 15 },   // Heavy snow showers
+  95: { d: 23, n: 23 },   // Thunderstorm
+  96: { d: 20, n: 20 },   // Thunderstorm with slight hail
+  99: { d: 21, n: 21 },   // Thunderstorm with heavy hail
 };
 
 // --- Constants ---
@@ -379,7 +378,7 @@ function getMeteoIcon(wmoCode, daytime = true, cloudCover = null) {
   }
   const m = WMO_TO_METEO[wmoCode];
   if (m) return daytime ? m.d : m.n;
-  return daytime ? 1 : 43;
+  return daytime ? 1 : 101;
 }
 
 // Returns a short text label for a WMO weather code (used as fallback when icon fails)
@@ -404,10 +403,11 @@ function buildWeatherIconDataUrl(wmoCode, daytime = true) {
   return `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`;
 }
 
-// Checks if it's daytime at the weather location. The backend resolves this
-// from Open-Meteo's `is_day` flag and sends it through as a boolean.
+// Checks if it's daytime at the weather location (using sunrise/sunset timestamps)
 function isDaytime(data) {
-  return data?.is_day !== false;
+  if (!data || !data.sys) return true;
+  if (!data.sys.sunrise || !data.sys.sunset) return true;
+  return data.dt >= data.sys.sunrise && data.dt <= data.sys.sunset;
 }
 
 // Returns a color based on temperature (blue=cold, red=hot)
@@ -748,17 +748,11 @@ function renderForecast(scroll, daily) {
   }
 
   scroll.innerHTML = '';
-  // Skip today — "today"'s weather is already shown in the hero and hourly chart above.
-  const upcoming = daily.slice(1, 8);
-  if (!upcoming.length) {
-    scroll.innerHTML = `<div class="forecast-placeholder">${t('noData')}</div>`;
-    return;
-  }
-  upcoming.forEach((item) => {
+  daily.slice(0, 7).forEach((item, idx) => {
     // Parse date string "2026-03-28"
     const parts = (item.date || '').split('-');
     const dt = new Date(+parts[0], +parts[1] - 1, +parts[2]);
-    const dayName = t('dayNames')[dt.getDay()];
+    const dayName = idx === 0 ? t('today') : t('dayNames')[dt.getDay()];
     const tMax = Math.round(item.temp_max ?? 0);
     const tMin = Math.round(item.temp_min ?? 0);
     const code = item.code ?? 0;
@@ -830,7 +824,7 @@ function renderTempChart(hourly) {
   // High-DPI canvas
   const dpr = window.devicePixelRatio || 1;
   const W = wrap.clientWidth;
-  const H = 170;
+  const H = 150;
   canvas.width = W * dpr;
   canvas.height = H * dpr;
   canvas.style.width = W + 'px';
@@ -841,8 +835,8 @@ function renderTempChart(hourly) {
   // Layout zones:
   // Top area: temperature curve (padT to rainTop)
   // Bottom area: rain bars (rainTop to H - padB)
-  // Time labels are drawn inside the extra padB room.
-  const padL = 30, padR = 30, padT = 18, padB = 30;
+  // Time labels: below everything
+  const padL = 30, padR = 30, padT = 18, padB = 18;
   const rainZoneH = 32; // height of the rain bar area
   const gap = 6;        // gap between temp curve and rain bars
   const tempBot = H - padB - rainZoneH - gap;
@@ -988,15 +982,12 @@ function renderTempChart(hourly) {
   }
 
   // --- Time labels at bottom (every 3h) ---
-  ctx.font = '600 10px Inter, Arial, sans-serif';
+  ctx.font = '600 9px Inter, Arial, sans-serif';
   ctx.textAlign = 'center';
-  ctx.textBaseline = 'middle';
-  ctx.fillStyle = 'rgba(255,255,255,0.55)';
-  const labelY = rainBot + 14;  // centered in the enlarged bottom padding
+  ctx.fillStyle = 'rgba(255,255,255,0.45)';
   for (let h = 0; h <= 23; h += 3) {
-    ctx.fillText(`${h.toString().padStart(2, '0')}h`, xOf(h), labelY);
+    ctx.fillText(`${h.toString().padStart(2, '0')}h`, xOf(h), H - 4);
   }
-  ctx.textBaseline = 'alphabetic';
 
   // --- Temperature value labels on curve (every 3h) ---
   ctx.font = '700 9px Inter, Arial, sans-serif';
