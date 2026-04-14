@@ -295,11 +295,11 @@ html, body {
 }
 .fc-cell:hover { background: rgba(255,255,255,0.09); border-color: rgba(255,255,255,0.14); transform: translateY(-2px); }
 .fc-time { font-size: 11px; color: var(--text-dim); margin-bottom: 6px; font-weight: 500; }
-.fc-icon { height: 36px; display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
-.fc-icon img, .fc-icon svg { width: 36px; height: 36px; object-fit: contain; shape-rendering: geometricPrecision; }
-.fc-icon span { font-size: 28px; line-height: 1; }
+.fc-icon { height: 48px; display: flex; align-items: center; justify-content: center; margin-bottom: 6px; }
+.fc-icon img, .fc-icon svg { width: 48px; height: 48px; object-fit: contain; shape-rendering: geometricPrecision; }
+.fc-icon span { font-size: 34px; line-height: 1; }
 .fc-temp { font-size: 14px; font-weight: 700; display: flex; gap: 4px; justify-content: center; align-items: baseline; }
-.fc-temp-min { font-size: 11px; font-weight: 500; opacity: 0.6; }
+.fc-temp-min { font-size: 11px; font-weight: 600; }
 .fc-rain { font-size: 9px; color: #5ab4ff; margin-top: 2px; min-height: 14px; }
 
 .forecast-placeholder {
@@ -457,8 +457,8 @@ html, body {
   .hero-temp { font-size: 44px; }
   .hero-icon-wrap, .hero-icon-wrap img, .hero-icon-wrap svg { width: 72px; height: 72px; }
   .fc-cell { width: 62px; padding: 8px 4px; }
-  .fc-icon img, .fc-icon svg { width: 30px; height: 30px; }
-  .fc-icon { height: 30px; margin-bottom: 4px; }
+  .fc-icon img, .fc-icon svg { width: 40px; height: 40px; }
+  .fc-icon { height: 40px; margin-bottom: 4px; }
 }
 
 /* --- Responsive: Phones (max 600px) --- */
@@ -540,8 +540,8 @@ html, body {
   .panel-forecast { padding: 10px 12px 12px; }
   .fc-cell { width: 58px; padding: 8px 4px; border-radius: 10px; }
   .fc-time { font-size: 10px; margin-bottom: 4px; }
-  .fc-icon { height: 28px; margin-bottom: 4px; }
-  .fc-icon img, .fc-icon svg { width: 28px; height: 28px; }
+  .fc-icon { height: 38px; margin-bottom: 4px; }
+  .fc-icon img, .fc-icon svg { width: 38px; height: 38px; }
   .fc-temp { font-size: 12px; }
   .fc-temp-min { font-size: 10px; }
   .fc-rain { font-size: 8px; }
