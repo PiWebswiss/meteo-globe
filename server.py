@@ -1,3 +1,7 @@
+######
+# This file was developed with the assistance of Claude by Anthropic.
+######
+
 """
 MeteoGlobe API server.
 

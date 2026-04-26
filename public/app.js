@@ -1,4 +1,8 @@
-﻿/*
+﻿/******
+ * This file was developed with the assistance of Claude by Anthropic.
+ ******/
+
+/*
   MeteoGlobe - CesiumJS edition
   Interactive 3D globe that shows real-time weather for any location.
   Uses Open-Meteo API (free, no key) for weather data, Nominatim for place names,

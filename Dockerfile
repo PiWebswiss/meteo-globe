@@ -1,3 +1,7 @@
+######
+# This file was developed with the assistance of Claude by Anthropic.
+######
+
 # ── Build stage: install Python deps ──────────────────────────────────────────
 FROM python:3.13-slim AS builder
 

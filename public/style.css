@@ -1,4 +1,8 @@
-﻿/*
+﻿/******
+ * This file was developed with the assistance of Claude by Anthropic.
+ ******/
+
+/*
   MeteoGlobe stylesheet.
   Organized as top-to-bottom by UI zone (loading -> topbar -> panel -> controls -> screensaver),
   followed by a hide-Cesium-credits tweak and two responsive breakpoints (<=900px tablet, <=600px phone).
