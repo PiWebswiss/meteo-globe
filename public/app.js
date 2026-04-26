@@ -128,7 +128,7 @@ const WMO_TO_METEO = {
 
 // --- Constants ---
 const HOME_VIEW = { lat: 20, lon: 10, range: 12_000_000 }; // Default globe view (center of Africa, zoomed out)
-const ROTATION_STEP_DEG = 0.04;  // How many degrees the globe rotates per tick in screensaver
+const ROTATION_STEP_DEG = 0.05;  // ~1.7°/sec — slow cinematic spin during screensaver
 const ROTATION_TICK_MS = 30;     // Milliseconds between each rotation tick
 
 // --- Global state ---
@@ -149,6 +149,7 @@ let zoomRenderTimer = null;       // Debounce timer for zoom-based marker update
 let lastZoomTier = 1;             // Current zoom tier (1=global, 2=regional, 3=close)
 let cityPlacemarkMap = new Map(); // Map of city name -> { bubble marker, icon marker, tier }
 let activeMarkerObjects = [];     // Markers for the currently selected location
+let screensaverActive = false;    // True while the screensaver is showing — switches pills to compact mode
 
 // t: city tier — 1=megacity (always shown), 2=major city (shown at regional zoom), 3=smaller city (shown when zoomed in)
 const CITIES = [
@@ -470,25 +471,33 @@ function tempBadgeText(c) {
 }
 
 // --- Marker rendering ---
-// Draws a small pill-shaped marker for cities on the globe.
+// Pill dimensions for each mode — read by collision detection too.
+const PILL_FULL = { w: 116, h: 40 };     // Default: icon + city name + temperature
+const PILL_COMPACT = { w: 76, h: 30 };   // Screensaver: icon + temperature only (small, dense)
+
+// Draws a pill-shaped weather marker for a city on the globe.
+// Two variants:
+//   - compact=false (default): icon left, city name top-right, temperature bottom-right
+//   - compact=true: icon left, temperature right — used during screensaver so many
+//     pills fit on screen at once and the user gets the "weather everywhere" feel
 // Rendered on a <canvas> at 2x resolution for sharp text in CesiumJS.
-// The pill shows a weather icon on the left and the temperature text on the right.
-// iconImg is an optional Image element to draw inside the pill.
-function buildCityLabelCanvas({ temp, iconImg }) {
+function buildCityLabelCanvas({ name, temp, iconImg, compact = false }) {
   const tv = asFiniteNumber(temp, 0);
   const color = tempColor(tv);
   const tempTxt = tempBadgeText(tv);
   const S = 2;
-  const W = 96 * S, H = 34 * S;
+  const dims = compact ? PILL_COMPACT : PILL_FULL;
+  const W = dims.w * S, H = dims.h * S;
   const c = document.createElement('canvas');
   c.width = W; c.height = H;
   c._superSampling = S;
   const ctx = c.getContext('2d');
   ctx.clearRect(0, 0, W, H);
 
-  // Pill background
+  // Pill background — fully rounded in compact, soft-rounded in full mode
+  const radius = compact ? (H / 2 - 2 * S) : 12 * S;
   ctx.beginPath();
-  ctx.roundRect(2 * S, 2 * S, W - 4 * S, H - 4 * S, (H / 2) - 2 * S);
+  ctx.roundRect(2 * S, 2 * S, W - 4 * S, H - 4 * S, radius);
   ctx.fillStyle = 'rgba(10,18,36,0.92)';
   ctx.fill();
   ctx.strokeStyle = 'rgba(255,255,255,0.22)';
@@ -496,9 +505,9 @@ function buildCityLabelCanvas({ temp, iconImg }) {
   ctx.stroke();
 
   // Weather icon on the left, clipped to a circle so any icon size looks clean
-  const iconSize = 22 * S;
-  const iconCx = 19 * S;
-  const iconCy = 17 * S;
+  const iconSize = (compact ? 20 : 24) * S;
+  const iconCx = (compact ? 17 : 20) * S;
+  const iconCy = (compact ? 15 : 20) * S;
   const iconR = iconSize / 2;
   if (iconImg && iconImg.complete && iconImg.naturalWidth > 0) {
     ctx.save();
@@ -517,12 +526,27 @@ function buildCityLabelCanvas({ temp, iconImg }) {
     ctx.globalAlpha = 1;
   }
 
-  // Temperature text (shifted right to make room for icon)
-  ctx.font = `800 ${14 * S}px Inter, Arial, sans-serif`;
-  ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = '#ffffff';
-  ctx.fillText(tempTxt, 62 * S, 17.5 * S);
+
+  if (compact) {
+    // Just the temperature, centered on the right side of the pill
+    ctx.font = `800 ${12 * S}px Inter, Arial, sans-serif`;
+    ctx.textAlign = 'center';
+    ctx.fillStyle = color;
+    ctx.fillText(tempTxt, 50 * S, 15 * S);
+  } else {
+    const city = safeCityName(name || '', 14);
+    const textX = 36 * S;
+    ctx.textAlign = 'left';
+    // City name (top right of icon)
+    ctx.font = `700 ${9 * S}px Inter, Arial, sans-serif`;
+    ctx.fillStyle = '#ffffff';
+    ctx.fillText(city, textX, 13 * S);
+    // Temperature (bottom right of icon)
+    ctx.font = `800 ${13 * S}px Inter, Arial, sans-serif`;
+    ctx.fillStyle = color;
+    ctx.fillText(tempTxt, textX, 28 * S);
+  }
 
   return c;
 }
@@ -1087,24 +1111,49 @@ function initSearch() {
 }
 
 // --- Globe rotation (used by screensaver) ---
-// Stops the automatic globe rotation
+// rotateTimer holds an unsubscribe function for the scene.preRender event.
+// Stops the automatic globe rotation and restores requestRenderMode.
 function stopRotation() {
   if (rotateTimer) {
-    clearInterval(rotateTimer);
+    if (typeof rotateTimer === 'function') rotateTimer();
+    else clearInterval(rotateTimer);
     rotateTimer = null;
   }
+  const scene = map?.viewer?.scene;
+  if (scene) scene.requestRenderMode = true;
 }
 
-// Starts spinning the globe automatically (used during screensaver idle mode)
+// Starts spinning the globe automatically (used during screensaver idle mode).
+// Hooks into Cesium's preRender event with continuous rendering enabled — this is
+// the canonical Cesium pattern for animations and is frame-synced (no setInterval drift).
+// Also re-runs the visibility pass every 400ms so pills appear/disappear with the spin.
 function startRotation() {
   if (rotateTimer) return;
-  rotateTimer = setInterval(() => {
-    if (!map) return;
-    // Spin the globe by shifting camera longitude for visible Earth rotation
-    if (typeof map.rotateLon === 'function') {
-      map.rotateLon(ROTATION_STEP_DEG);
+  const viewer = map?.viewer;
+  const scene = viewer?.scene;
+  if (!viewer || !scene) return;
+  // Force continuous rendering; without this, requestRenderMode skips frames
+  // and the rotation looks frozen even though the camera state is updating.
+  scene.requestRenderMode = false;
+  // Convert per-tick step into per-second rate so the spin is frame-rate independent.
+  const radPerSec = window.Cesium.Math.toRadians(ROTATION_STEP_DEG) * (1000 / ROTATION_TICK_MS);
+  let lastMs = performance.now();
+  let lastVisibilityMs = lastMs;
+  const remove = scene.preRender.addEventListener(() => {
+    const now = performance.now();
+    const dt = (now - lastMs) / 1000;
+    lastMs = now;
+    if (!viewer.camera) return;
+    viewer.camera.rotate(window.Cesium.Cartesian3.UNIT_Z, radPerSec * dt);
+    // Refresh marker visibility periodically so backside-culled pills reappear
+    // as they rotate into view. 600ms is the sweet spot — ~1° of rotation between
+    // updates at ROTATION_STEP_DEG, imperceptible visually but cheap on CPU.
+    if (now - lastVisibilityMs > 600) {
+      lastVisibilityMs = now;
+      updateCityTierVisibility();
     }
-  }, ROTATION_TICK_MS);
+  });
+  rotateTimer = remove;
 }
 
 // --- Camera controls ---
@@ -1249,12 +1298,16 @@ function createImageMarker(lat, lon, imageSource, width, height, anchorX, anchor
 
 // Draws weather markers for all cities on the globe.
 // Each city gets a single pill marker with icon + temperature drawn into one canvas.
+// During screensaver, uses compact pills and shows every tier so the globe feels alive.
 function renderCityMarkers(results) {
   if (!map) return;
   clearCityMarkers();
 
+  const compact = screensaverActive;
+  const dims = compact ? PILL_COMPACT : PILL_FULL;
   const zoom = map.getZoom() ?? 2;
-  const maxTier = getMaxCityTier(zoomToRange(zoom));
+  // Screensaver overrides tier filtering — show all cities regardless of zoom.
+  const maxTier = compact ? 3 : getMaxCityTier(zoomToRange(zoom));
   lastZoomTier = maxTier;
 
   for (const r of results) {
@@ -1271,33 +1324,105 @@ function renderCityMarkers(results) {
     const show = cityTier <= maxTier;
 
     // First render without icon (shows colored dot fallback)
-    const labelCanvas = buildCityLabelCanvas({ temp });
-    const label = createImageMarker(r.lat, r.lon, labelCanvas, 96, 34, 48, 34, 1100, show);
+    const labelCanvas = buildCityLabelCanvas({ name: r.name, temp, compact });
+    const label = createImageMarker(r.lat, r.lon, labelCanvas, dims.w, dims.h, dims.w / 2, dims.h, 1100, show);
 
     // Load icon and re-render the pill with the icon embedded
     loadIconImage(iconCode, code, day, (iconImg) => {
       if (iconImg) {
-        const updated = buildCityLabelCanvas({ temp, iconImg });
-        label.setIcon({ url: updated, scaledSize: { width: 96, height: 34 }, anchor: { x: 48, y: 34 } });
+        const updated = buildCityLabelCanvas({ name: r.name, temp, iconImg, compact });
+        label.setIcon({ url: updated, scaledSize: { width: dims.w, height: dims.h }, anchor: { x: dims.w / 2, y: dims.h } });
       }
     });
 
-    cityPlacemarkMap.set(r.name, { bubble: label, icon: null, tier: cityTier });
+    // Cache the Cartesian3 position so the visibility pass doesn't re-allocate
+    // 90 vectors per frame during the screensaver spin.
+    const cartPos = window.Cesium
+      ? window.Cesium.Cartesian3.fromDegrees(r.lon, r.lat, 0)
+      : null;
+    cityPlacemarkMap.set(r.name, { bubble: label, icon: null, tier: cityTier, lat: r.lat, lon: r.lon, pos: cartPos, pillW: dims.w, pillH: dims.h });
   }
+
+  // Initial collision pass once Cesium has projected the new entities
+  setTimeout(updateCityTierVisibility, 50);
 }
 
-// Shows/hides city markers based on current zoom level (avoids clutter when zoomed out)
+// Shows/hides city markers based on zoom tier, backside culling, and screen-space
+// collision detection. Tier filtering decides which cities are eligible at the current
+// zoom; backside culling removes anything on the far side of the globe; collision
+// detection then hides any pill whose screen rect overlaps a higher-priority pill.
 function updateCityTierVisibility() {
   if (!cityPlacemarkMap.size) return;
   const zoom = map?.getZoom?.() ?? 2;
-  // Reuse the same tier thresholds used during marker creation.
-  const maxTier = getMaxCityTier(zoomToRange(zoom));
-  if (maxTier === lastZoomTier) return;
+  // Screensaver shows every tier; normal view tier-filters by zoom.
+  const maxTier = screensaverActive ? 3 : getMaxCityTier(zoomToRange(zoom));
   lastZoomTier = maxTier;
-  for (const { bubble, icon, tier } of cityPlacemarkMap.values()) {
-    const show = tier <= maxTier;
-    if (bubble) bubble.setVisible(show);
-    if (icon) icon.setVisible(show);
+
+  const C = window.Cesium;
+  const viewer = map?.viewer;
+  const scene = viewer?.scene;
+  if (!C || !viewer || !scene) {
+    // Fallback to tier-only filtering if Cesium isn't ready
+    for (const { bubble, icon, tier } of cityPlacemarkMap.values()) {
+      const show = tier <= maxTier;
+      if (bubble) bubble.setVisible(show);
+      if (icon) icon.setVisible(show);
+    }
+    return;
+  }
+
+  const PAD = 4;
+
+  // Backside culling: skip points hidden behind the globe from the camera's POV.
+  const occluder = new C.EllipsoidalOccluder(scene.globe.ellipsoid, viewer.camera.position);
+  // Cesium ≥1.110 renamed wgs84ToWindowCoordinates → worldToWindowCoordinates;
+  // pick whichever the loaded build actually exposes so we work on both.
+  const projectToScreen = C.SceneTransforms.worldToWindowCoordinates
+    || C.SceneTransforms.wgs84ToWindowCoordinates;
+
+  const candidates = [];
+  for (const m of cityPlacemarkMap.values()) {
+    if (m.tier > maxTier) {
+      m.bubble?.setVisible(false);
+      m.icon?.setVisible(false);
+      continue;
+    }
+    const pos = m.pos;
+    if (!pos) {
+      m.bubble?.setVisible(false);
+      continue;
+    }
+    if (!occluder.isPointVisible(pos)) {
+      m.bubble?.setVisible(false);
+      continue;
+    }
+    const screen = projectToScreen(scene, pos);
+    if (!screen || !Number.isFinite(screen.x)) {
+      m.bubble?.setVisible(false);
+      continue;
+    }
+    candidates.push({ m, x: screen.x, y: screen.y });
+  }
+  // Tier 1 wins over tier 2 wins over tier 3 in collision contests.
+  candidates.sort((a, b) => a.m.tier - b.m.tier);
+
+  // Greedy placement: hide any marker whose box overlaps an already-placed one.
+  // Each marker's box is sized from its own pill dimensions (compact vs full).
+  const placed = [];
+  for (const it of candidates) {
+    const halfW = (it.m.pillW ?? PILL_FULL.w) / 2;
+    const fullH = it.m.pillH ?? PILL_FULL.h;
+    const left = it.x - halfW, right = it.x + halfW;
+    const top = it.y - fullH, bottom = it.y;
+    let collides = false;
+    for (const p of placed) {
+      if (left < p.right + PAD && right > p.left - PAD && top < p.bottom + PAD && bottom > p.top - PAD) {
+        collides = true;
+        break;
+      }
+    }
+    it.m.bubble?.setVisible(!collides);
+    if (!collides) placed.push({ left, right, top, bottom });
   }
 }
 
@@ -1497,6 +1622,7 @@ function createCesiumMapAdapter(viewer) {
     click: [],
     zoom_changed: [],
     dragstart: [],
+    move_end: [],
   };
   const emit = (type, payload) => {
     const list = listeners[type] || [];
@@ -1529,6 +1655,9 @@ function createCesiumMapAdapter(viewer) {
       emit('zoom_changed');
     }
   });
+  // Native moveEnd fires once after a camera move settles — perfect for collision recompute.
+  // It does NOT fire during continuous auto-rotation, so the screensaver spin stays smooth.
+  viewer.camera.moveEnd.addEventListener(() => emit('move_end'));
 
   return {
     viewer,
@@ -1573,11 +1702,6 @@ function createCesiumMapAdapter(viewer) {
       const c = getCameraCenter(viewer);
       setCameraView(viewer, c.lat, c.lon, getCameraRange(viewer), null, deg);
     },
-    // Smooth globe spin using Cesium's camera.rotate (no jumps)
-    rotateLon(stepDeg) {
-      if (!viewer?.camera) return;
-      viewer.camera.rotate(C.Cartesian3.UNIT_Z, C.Math.toRadians(stepDeg));
-    },
   };
 }
 
@@ -1589,6 +1713,13 @@ function bindMapEventHandlers(nextMap) {
   });
   nextMap.addListener('zoom_changed', () => {
     stopRotation();
+    clearTimeout(zoomRenderTimer);
+    zoomRenderTimer = setTimeout(updateCityTierVisibility, 80);
+  });
+  nextMap.addListener('move_end', () => {
+    // Skip during screensaver spin: the camera is moving every frame, so the
+    // collision pass would re-run continuously and stutter the rotation.
+    if (rotateTimer) return;
     clearTimeout(zoomRenderTimer);
     zoomRenderTimer = setTimeout(updateCityTierVisibility, 80);
   });
@@ -1937,7 +2068,8 @@ function initScreensaver() {
   let idleTimer = null;
   let spinDelayTimer = null;
   let screensaverStartedRotation = false;
-  const IDLE_MS = 60_000;
+  let preScreensaverView = null; // Camera state captured when entering, restored on dismiss
+  const IDLE_MS = 20_000;        // 20 s — short enough that idle behavior is obvious
 
   function updateClock() {
     const now = new Date();
@@ -1956,18 +2088,32 @@ function initScreensaver() {
     clearActiveMarkers();
     activeMarkerData = null;
     activeTarget = null;
-    renderCityMarkers(cityWeatherCache);
-    // Keep city markers visible during screensaver to show weather on earth
-    updateCityTierVisibility();
-    // Zoom closer to the globe so weather markers are clearly visible
+    // Snapshot the user's view BEFORE we move the camera, so dismiss can restore it.
+    if (map?.viewer) {
+      const c = getCameraCenter(map.viewer);
+      preScreensaverView = {
+        lat: c.lat,
+        lon: c.lon,
+        range: getCameraRange(map.viewer),
+      };
+    }
+    // Switch to compact pill mode and move the camera to the cinematic view first,
+    // THEN render markers and run the visibility pass — this way collision/backside
+    // culling is computed against the screensaver's camera, not whatever the user
+    // was looking at before. Compact pills + showing every tier give the dense,
+    // weather-everywhere look.
+    screensaverActive = true;
     focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range * 0.65);
+    renderCityMarkers(cityWeatherCache);
+    updateCityTierVisibility();
     if (rotateTimer) stopRotation();
     clearTimeout(spinDelayTimer);
+    // Short delay so the camera/markers settle one frame before the spin starts.
     spinDelayTimer = setTimeout(() => {
       if (!ss.classList.contains('active')) return;
       startRotation();
       screensaverStartedRotation = true;
-    }, 600);
+    }, 150);
   }
 
   function dismissScreensaver() {
@@ -1977,13 +2123,21 @@ function initScreensaver() {
     document.querySelector('.controls')?.classList.remove('ss-hidden');
     document.getElementById('hint')?.classList.remove('ss-hidden');
     document.getElementById('map-attrib')?.classList.remove('ss-hidden');
-    // Restore city markers
-    updateCityTierVisibility();
     clearTimeout(spinDelayTimer);
     if (screensaverStartedRotation) {
       stopRotation();
       screensaverStartedRotation = false;
     }
+    // Switch back to full pills and re-render so city names return immediately,
+    // then fly back to the view the user had before the screensaver took over.
+    // Falls back to HOME_VIEW if we never captured one.
+    screensaverActive = false;
+    renderCityMarkers(cityWeatherCache);
+    const target = preScreensaverView ?? HOME_VIEW;
+    flyToLocation(target.lat, target.lon, target.range, 1.2);
+    preScreensaverView = null;
+    // Recompute marker visibility after the flight settles
+    setTimeout(updateCityTierVisibility, 1300);
     resetIdle();
   }
 
