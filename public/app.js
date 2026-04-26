@@ -128,8 +128,8 @@ const WMO_TO_METEO = {
 
 // --- Constants ---
 const HOME_VIEW = { lat: 20, lon: 10, range: 12_000_000 }; // Default globe view (center of Africa, zoomed out)
-const ROTATION_STEP_DEG = 0.05;  // ~1.7°/sec — slow cinematic spin during screensaver
-const ROTATION_TICK_MS = 30;     // Milliseconds between each rotation tick
+const ROTATION_STEP_DEG = 0.13;  // ~1.6°/sec at 80ms ticks — slow cinematic spin
+const ROTATION_TICK_MS = 80;     // ~12 fps — easy on the Raspberry Pi GPU
 
 // --- Global state ---
 let map;                          // CesiumJS map adapter (wraps the Cesium Viewer)
@@ -1111,49 +1111,34 @@ function initSearch() {
 }
 
 // --- Globe rotation (used by screensaver) ---
-// rotateTimer holds an unsubscribe function for the scene.preRender event.
-// Stops the automatic globe rotation and restores requestRenderMode.
+// Light-weight rotation tuned for low-power devices (Raspberry Pi):
+// keeps requestRenderMode = true, only requests a render on each rotation tick
+// (~15 fps), and refreshes marker visibility every 6 ticks (~600ms).
 function stopRotation() {
   if (rotateTimer) {
-    if (typeof rotateTimer === 'function') rotateTimer();
-    else clearInterval(rotateTimer);
+    clearInterval(rotateTimer);
     rotateTimer = null;
   }
-  const scene = map?.viewer?.scene;
-  if (scene) scene.requestRenderMode = true;
 }
 
-// Starts spinning the globe automatically (used during screensaver idle mode).
-// Hooks into Cesium's preRender event with continuous rendering enabled — this is
-// the canonical Cesium pattern for animations and is frame-synced (no setInterval drift).
-// Also re-runs the visibility pass every 400ms so pills appear/disappear with the spin.
 function startRotation() {
   if (rotateTimer) return;
   const viewer = map?.viewer;
   const scene = viewer?.scene;
   if (!viewer || !scene) return;
-  // Force continuous rendering; without this, requestRenderMode skips frames
-  // and the rotation looks frozen even though the camera state is updating.
-  scene.requestRenderMode = false;
-  // Convert per-tick step into per-second rate so the spin is frame-rate independent.
-  const radPerSec = window.Cesium.Math.toRadians(ROTATION_STEP_DEG) * (1000 / ROTATION_TICK_MS);
-  let lastMs = performance.now();
-  let lastVisibilityMs = lastMs;
-  const remove = scene.preRender.addEventListener(() => {
-    const now = performance.now();
-    const dt = (now - lastMs) / 1000;
-    lastMs = now;
+  // Step in radians per tick so the spin speed stays consistent if we change tick rate.
+  const radPerTick = window.Cesium.Math.toRadians(ROTATION_STEP_DEG);
+  let visibilityCounter = 0;
+  rotateTimer = setInterval(() => {
     if (!viewer.camera) return;
-    viewer.camera.rotate(window.Cesium.Cartesian3.UNIT_Z, radPerSec * dt);
-    // Refresh marker visibility periodically so backside-culled pills reappear
-    // as they rotate into view. 600ms is the sweet spot — ~1° of rotation between
-    // updates at ROTATION_STEP_DEG, imperceptible visually but cheap on CPU.
-    if (now - lastVisibilityMs > 600) {
-      lastVisibilityMs = now;
+    viewer.camera.rotate(window.Cesium.Cartesian3.UNIT_Z, radPerTick);
+    scene.requestRender();
+    visibilityCounter++;
+    if (visibilityCounter >= 6) {
+      visibilityCounter = 0;
       updateCityTierVisibility();
     }
-  });
-  rotateTimer = remove;
+  }, ROTATION_TICK_MS);
 }
 
 // --- Camera controls ---
@@ -1306,8 +1291,9 @@ function renderCityMarkers(results) {
   const compact = screensaverActive;
   const dims = compact ? PILL_COMPACT : PILL_FULL;
   const zoom = map.getZoom() ?? 2;
-  // Screensaver overrides tier filtering — show all cities regardless of zoom.
-  const maxTier = compact ? 3 : getMaxCityTier(zoomToRange(zoom));
+  // Screensaver shows tiers 1+2 (~62 cities) — tier 3 is too small to read while
+  // the globe is spinning, and skipping it cuts billboard count by a third on the Pi.
+  const maxTier = compact ? 2 : getMaxCityTier(zoomToRange(zoom));
   lastZoomTier = maxTier;
 
   for (const r of results) {
@@ -1354,8 +1340,8 @@ function renderCityMarkers(results) {
 function updateCityTierVisibility() {
   if (!cityPlacemarkMap.size) return;
   const zoom = map?.getZoom?.() ?? 2;
-  // Screensaver shows every tier; normal view tier-filters by zoom.
-  const maxTier = screensaverActive ? 3 : getMaxCityTier(zoomToRange(zoom));
+  // Screensaver caps at tier 2; normal view tier-filters by zoom.
+  const maxTier = screensaverActive ? 2 : getMaxCityTier(zoomToRange(zoom));
   lastZoomTier = maxTier;
 
   const C = window.Cesium;
@@ -2100,9 +2086,15 @@ function initScreensaver() {
     // Switch to compact pill mode and move the camera to the cinematic view first,
     // THEN render markers and run the visibility pass — this way collision/backside
     // culling is computed against the screensaver's camera, not whatever the user
-    // was looking at before. Compact pills + showing every tier give the dense,
-    // weather-everywhere look.
+    // was looking at before. Compact pills + showing tier 1+2 give the dense,
+    // weather-everywhere look without overwhelming the Raspberry Pi GPU.
     screensaverActive = true;
+    // Drop render resolution to ~half during the spin: ~4x fewer fragment-shader
+    // invocations per frame on the Pi. Restored on dismiss.
+    if (map?.viewer) {
+      map.viewer._savedResolutionScale = map.viewer.resolutionScale;
+      map.viewer.resolutionScale = 0.6;
+    }
     focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range * 0.65);
     renderCityMarkers(cityWeatherCache);
     updateCityTierVisibility();
@@ -2132,6 +2124,11 @@ function initScreensaver() {
     // then fly back to the view the user had before the screensaver took over.
     // Falls back to HOME_VIEW if we never captured one.
     screensaverActive = false;
+    // Restore full render resolution.
+    if (map?.viewer && map.viewer._savedResolutionScale != null) {
+      map.viewer.resolutionScale = map.viewer._savedResolutionScale;
+      map.viewer._savedResolutionScale = null;
+    }
     renderCityMarkers(cityWeatherCache);
     const target = preScreensaverView ?? HOME_VIEW;
     flyToLocation(target.lat, target.lon, target.range, 1.2);
