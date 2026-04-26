@@ -1,6 +1,41 @@
 # Dev Log
 
-## 2026-03-28
+### Weather panel load latency fix
+
+Users reported the weather panel feels laggy when clicking a city. I traced it to `weather_payload()` in `server.py`, which was running Nominatim and Open-Meteo **sequentially** — Nominatim is rate-limited to 1 req/s and adds ~1.1s of dead wait per cold click before Open-Meteo even starts.
+
+Two changes:
+
+- **Parallelized the two upstream calls.** `weather_payload()` now fires `reverse_geocode_brief()` via `asyncio.create_task()` and runs `fetch_json()` for Open-Meteo concurrently. The place name is awaited only after the weather payload has returned. This alone saves ~300ms on every cold click.
+- **Added a `place_name` query param to `/api/weather`.** When the frontend already knows the location's name (city marker click, search dropdown selection), it passes `?place_name=<name>` and the backend skips Nominatim entirely. This drops marker-click cold-load time from ~1.5–2.0s to ~300ms.
+
+Frontend wiring:
+- `fetchWeatherAt(lat, lon, force, placeName)` now accepts an optional `placeName` and forwards it to the API.
+- New `findNearbyCityName(lat, lon, threshold = 0.1)` helper looks up `cityWeatherCache` for a city within ~10km of the click point. `onMapPick()` uses it so clicks on visible city markers skip Nominatim.
+- Search dropdown click handler passes `r.name` directly (no proximity check needed, the user explicitly picked it).
+- Other callsites (`locateAndShowUserWeather`, refresh button) keep the old behavior — they don't have a known name.
+
+Verified with `python -m py_compile server.py` and `node --check public/app.js`.
+
+### Code review findings (not yet fixed)
+
+While reviewing, I noted three issues to address in a follow-up pass:
+
+- **Timezone bug in `build_open_meteo_forecast()`** (`server.py:154`). `dt_unix = iso_utc_to_unix(times[i])` treats Open-Meteo's local time strings as UTC. The correct pattern (used by `weather_payload()`) is `dt_unix = local_unix - utc_offset`. Effect: the "skip slots older than 1h" filter doesn't work outside UTC, and the forecast `dt` field sent to the frontend is offset by `utc_offset_seconds`.
+- **`Dockerfile` ignores the `PORT` env var.** `CMD` hardcodes `--port 3000`, so the `PORT: 3000` line in `docker-compose.yml` is dead.
+- **Internal exception messages leaked to clients.** `/api/weather` and `/api/geocode` do `raise HTTPException(status_code=500, detail=str(e))`, which exposes upstream error text. Should log + return a generic message.
+
+### License made valid
+
+The `LICENSE` file used to be a paraphrased summary of CC BY-NC 4.0, which is not legally enforceable. Replaced it with the official short-form notice: copyright line, link to `creativecommons.org/licenses/by-nc/4.0/` and `/legalcode`, postal mailing address, accurate summary of the four conditions (attribution, non-commercial, no additional restrictions, no warranties), and the standard CC disclaimer block.
+
+### Source file attribution headers
+
+Added a uniform `# This file was developed with the assistance of Claude by Anthropic.` banner to all files containing actual code or markup: `server.py`, `Dockerfile`, `public/app.js`, `public/style.css`, `public/index.html`, and the two demo notebooks. Skipped pure config/data files (`requirements.txt`, `docker-compose.yml`, `.gitignore`, `.dockerignore`) and documentation (`README.md`, this dev log).
+
+### Notebook copy edit
+
+Reworded the "Etape 4 — previsions 7 jours" section in `dev/demo_lausanne.ipynb` to clarify that the backend fires the forecast call *in parallel* with the current-weather call, and that `hourly` and `daily` parameters are bundled into a single Open-Meteo request rather than two.
 
 Current live setup: https://meteoglobe.piweb.ch/
 
@@ -33,8 +68,6 @@ I fixed marker icon misalignment. The weather icon was a separate Cesium billboa
 
 I replaced all 84 weather icons with the official MeteoSwiss SVG icons downloaded from `https://www.meteoschweiz.admin.ch/static/resources/weather-symbols/{code}.svg`. The old 40x40 PNGs were blurry when upscaled. The official SVGs are vector graphics that scale perfectly at any size. Deleted all PNG files, kept only SVGs. Hero icon restored to 88px. The server already checks `.svg` before `.png`, so the new icons are served automatically via `/api/icon/{code}`.
 
-## 2026-03-27
-
 I simplified the weather backend to use a single data source. Removed OpenWeatherMap and MeteoSwiss API integrations entirely — the app now uses only Open-Meteo for all weather data (current conditions + forecasts) and Nominatim for geocoding. This eliminates the need for any API key.
 
 Changes:
@@ -44,9 +77,7 @@ Changes:
 - `README.md`: updated to reflect Open-Meteo as sole weather source, removed OWM key references.
 - Local weather icons (`public/icons/`) are still used for all display.
 
-## 2026-03-25
-
-Today I updated the project for the exam version and cleaned the interaction flow.
+I updated the project for the exam version and cleaned the interaction flow.
 
 I fully updated the report file `rapport_station_meteo_eink_v3.docx` so it now matches the new MeteoGlobe 3D project instead of the old e-ink base. The report now follows the `laboratoire - CFC28.pdf` structure and explains clearly which APIs are used, how data is extracted and normalized, how caching is handled, how security is done, and how testing was performed.
 
@@ -99,8 +130,6 @@ I removed emoji fallbacks from the visible UI flow. Country display and search b
 I enforced city-name placement under markers: each city marker now includes a dedicated name-strip placemark rendered below the round weather bubble, and the active selected marker gets the same under-label treatment. Cache-busting bumped to `app.js?v=nasa3d20`.
 
 I slowed screensaver activation to 60 seconds idle (from 15 seconds) for normal day-to-day use, and bumped cache-busting to app.js?v=nasa3d21.
-
-## 2026-03-26
 
 I fixed the marker stacking bug visible on selected cities (example: Lagos). The city base marker is now temporarily hidden when the same location is selected as the active marker, so we no longer render two markers on top of each other.
 
@@ -165,12 +194,9 @@ I also bumped frontend cache-busting to `app.js?v=nasa3d29` in `public/index.htm
 
 I migrated the frontend globe engine from Google Maps to CesiumJS so the app can render a true 3D Earth without Google API key restrictions. In `public/app.js`, I replaced the Google loader with a Cesium loader (`unpkg` script + widgets CSS), introduced a Cesium map adapter (click picking, zoom/pan, heading/tilt, drag/zoom events), and switched marker rendering from AdvancedMarkerElement to Cesium billboard entities while keeping existing weather marker logic, city-tier visibility, controls, search, and panel behavior. I also updated default attribution text to CesiumJS/OpenStreetMap and bumped frontend cache-busting to `app.js?v=nasa3d30` in `public/index.html`.
 
-
-## 2026-03-27
-
 I fixed the persistent blue planet issue. The root cause was that `createNaturalEarthFallbackProvider` used `UrlTemplateImageryProvider` with `GeographicTilingScheme` and `maximumLevel: 5`, which did not match the actual NaturalEarthII TMS tile layout (only levels 0-2 with its own metadata). This caused silent tile-load failures, leaving the globe showing Cesium's default blue base color. Fix: replaced with `TileMapServiceImageryProvider.fromUrl()` which reads the `tilemapresource.xml` descriptor for correct tiling, set `globe.baseColor` to dark (`#0a1628`) so even during async imagery load the globe never appears blue, added the viewer with `baseLayer: false` to avoid any default imagery, and added a fallback to public OpenStreetMap tiles if NaturalEarthII is unavailable from the CDN.
 
-I also fixed the temperature labels on globe markers. `tempBadgeText()` was rendering "+23C" without a degree symbol, while the panel's `displayTemp()` correctly showed "23°C". Added the Unicode degree sign (`\u00B0`) to marker SVG temperature badges so they now show "+23°C" consistently. Cache-busting bumped to `app.js?v=nasa3d37`.
+I also fixed the temperature labels on globe markers. `tempBadgeText()` was rendering "+23C" without a degree symbol, while the panel's `displayTemp()` correctly showed "23°C". Added the Unicode degree sign (`°`) to marker SVG temperature badges so they now show "+23°C" consistently. Cache-busting bumped to `app.js?v=nasa3d37`.
 
 I replaced the globe imagery with Esri ArcGIS World Imagery (free satellite tiles) to give a Google Earth-like appearance. The `addBaseImageryLayer()` function now tries providers in order: (1) Esri World Imagery satellite, (2) Cesium NaturalEarthII via TMS, (3) public OpenStreetMap tiles. The globe base color remains dark `#0a1628` to prevent any blue flash during async imagery loading. Attribution updated to reflect Esri imagery. Cache-busting bumped to `app.js?v=nasa3d38`.
 

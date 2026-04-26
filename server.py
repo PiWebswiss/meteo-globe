@@ -285,10 +285,14 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
     frontend can consume it without changes.
     When place_name_override is given, skip the slow Nominatim reverse-geocode call.
     """
-    if place_name_override:
-        place_name, country_code = place_name_override, ""
-    else:
-        place_name, country_code = await reverse_geocode_brief(lat, lon, force=force)
+    # Fire Nominatim (slow: rate-limited to 1 req/s) and Open-Meteo in parallel.
+    # They are independent — no need to wait for the place name before fetching weather.
+    geo_task = (
+        asyncio.create_task(reverse_geocode_brief(lat, lon, force=force))
+        if not place_name_override
+        else None
+    )
+
     om_key = f"om_current_{lat:.4f}_{lon:.4f}"
     om_url = "https://api.open-meteo.com/v1/forecast"
     payload = await fetch_json(
@@ -303,6 +307,11 @@ async def weather_payload(lat: float, lon: float, force: bool = False, place_nam
         },
         force=force,
     )
+
+    if geo_task is not None:
+        place_name, country_code = await geo_task
+    else:
+        place_name, country_code = place_name_override, ""
     current = payload.get("current") if isinstance(payload, dict) else None
     if not isinstance(current, dict):
         raise HTTPException(status_code=500, detail="Open-Meteo current block missing")
@@ -403,10 +412,14 @@ async def sat_tile_proxy(layer: str, z: int, x: int, y: int):
     return Response(content=resp.content, media_type=content_type,
                     headers={"Cache-Control": "public, max-age=604800"})
 @app.get("/api/weather", summary="Current weather at a coordinate")
-async def weather(lat: float, lon: float, force: bool = False):
-    """Return current weather for a given lat/lon (used when clicking the globe)."""
+async def weather(lat: float, lon: float, force: bool = False, place_name: str | None = None):
+    """Return current weather for a given lat/lon (used when clicking the globe).
+
+    If `place_name` is provided (e.g. clicking a known city marker), the slow
+    Nominatim reverse-geocode lookup is skipped entirely.
+    """
     try:
-        return await weather_payload(lat, lon, force=force)
+        return await weather_payload(lat, lon, force=force, place_name_override=place_name)
     except HTTPException:
         raise
     except Exception as e:
