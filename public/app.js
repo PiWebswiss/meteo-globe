@@ -635,26 +635,11 @@ async function readErrorMessage(res) {
   return `${res.status} ${res.statusText}`;
 }
 
-// Fetches current weather from the backend for given coordinates.
-// When `placeName` is provided, the backend skips the slow Nominatim
-// reverse-geocode lookup (saves ~1.1-1.5s on cold clicks).
-async function fetchWeatherAt(lat, lon, force = false, placeName = null) {
-  const params = { lat, lon, force };
-  if (placeName) params.place_name = placeName;
-  const res = await fetch(apiPath('/api/weather', params));
+// Fetches current weather from the backend for given coordinates
+async function fetchWeatherAt(lat, lon, force = false) {
+  const res = await fetch(apiPath('/api/weather', { lat, lon, force }));
   if (!res.ok) throw new Error(await readErrorMessage(res));
   return res.json();
-}
-
-// Returns the name of a known city marker if (lat, lon) is within ~10km of one,
-// else null. Used to skip Nominatim when the user clicks a city marker.
-function findNearbyCityName(lat, lon, threshold = 0.1) {
-  for (const c of cityWeatherCache) {
-    if (Math.abs(c.lat - lat) < threshold && Math.abs(c.lon - lon) < threshold) {
-      return c.name;
-    }
-  }
-  return null;
 }
 
 // fetchPointWeather is an alias kept for call-site readability
@@ -1065,7 +1050,7 @@ async function doSearch(q, dropdown) {
       stopRotation();
       flyToLocation(r.lat, r.lon, 900000, 1.8);
       try {
-        const data = await fetchPointWeather(r.lat, r.lon, false, r.name);
+        const data = await fetchPointWeather(r.lat, r.lon);
         showPanel(data, { target: { lat: r.lat, lon: r.lon, source: 'search' } });
       } catch (err) {
         hidePanel();
@@ -1393,8 +1378,7 @@ async function onMapPick(lat, lon, source = 'manual') {
   focusOn(lat, lon, Math.max(2_500, (zoomToRange(map?.getZoom?.() ?? 2)) * 0.72));
   panelLoading();
   try {
-    const knownName = findNearbyCityName(lat, lon);
-    const data = await fetchPointWeather(lat, lon, false, knownName);
+    const data = await fetchPointWeather(lat, lon);
     showPanel(data, { target: { lat, lon, source } });
   } catch (err) {
     hidePanel();
