@@ -128,8 +128,8 @@ const WMO_TO_METEO = {
 
 // --- Constants ---
 const HOME_VIEW = { lat: 20, lon: 10, range: 12_000_000 }; // Default globe view (center of Africa, zoomed out)
-const ROTATION_STEP_DEG = 0.13;  // ~1.6°/sec at 80ms ticks — slow cinematic spin
-const ROTATION_TICK_MS = 80;     // ~12 fps — easy on the Raspberry Pi GPU
+const ROTATION_STEP_DEG = 0.08;  // ~1.6°/sec at 50ms ticks
+const ROTATION_TICK_MS = 50;     // ~20 fps — smoother spin while still light on the Pi
 
 // --- Global state ---
 let map;                          // CesiumJS map adapter (wraps the Cesium Viewer)
@@ -1134,7 +1134,9 @@ function startRotation() {
     viewer.camera.rotate(window.Cesium.Cartesian3.UNIT_Z, radPerTick);
     scene.requestRender();
     visibilityCounter++;
-    if (visibilityCounter >= 6) {
+    // ~12 ticks at 50ms = 600ms between visibility recomputes — keeps the
+    // collision pass off the per-frame critical path.
+    if (visibilityCounter >= 12) {
       visibilityCounter = 0;
       updateCityTierVisibility();
     }
