@@ -1,5 +1,7 @@
 # MeteoGlobe
 
+![Globe](docs/meteo_globe.png)
+
 Interactive 3D weather globe powered by Open-Meteo (free, no API key needed).
 
 Live demo: https://meteoglobe.piweb.ch/
