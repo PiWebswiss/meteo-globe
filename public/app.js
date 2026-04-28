@@ -1814,6 +1814,39 @@ function initMap() {
     mapContextMenuBound = true;
   }
 
+  // WebGL recovery: on the Pi GPU the context can be lost under pressure.
+  // Cesium's shader recompile sometimes fails after a loss, leaving a frozen
+  // canvas. Stop the spin (frees GPU work) and reload once — using sessionStorage
+  // so a broken GPU doesn't trap the user in an infinite reload loop.
+  const glCanvas = viewer.scene?.canvas;
+  if (glCanvas) {
+    glCanvas.addEventListener('webglcontextlost', (ev) => {
+      ev.preventDefault();
+      try { stopRotation(); } catch (_) {}
+      const alreadyReloaded = sessionStorage.getItem('mg_webgl_reloaded') === '1';
+      if (alreadyReloaded) {
+        flashHint('GPU context lost. Close other tabs and reload manually.', 15000);
+        return;
+      }
+      sessionStorage.setItem('mg_webgl_reloaded', '1');
+      setTimeout(() => location.reload(), 1500);
+    }, false);
+    glCanvas.addEventListener('webglcontextrestored', () => {
+      // Clear the reload guard so a future independent loss can recover too.
+      sessionStorage.removeItem('mg_webgl_reloaded');
+    }, false);
+  }
+
+  // Fullscreen / resize: with requestRenderMode = true, Cesium repaints on demand.
+  // A fullscreen toggle changes the canvas size but doesn't always trigger a render
+  // on its own, so the globe can look stretched or blank until the next interaction.
+  // Force a render after fullscreen changes and after resize events.
+  const requestRenderSafe = () => { try { viewer.scene.requestRender(); } catch (_) {} };
+  window.addEventListener('resize', requestRenderSafe);
+  document.addEventListener('fullscreenchange', () => setTimeout(requestRenderSafe, 100));
+  // Re-renders the marker visibility too in case backside culling changed.
+  document.addEventListener('fullscreenchange', () => setTimeout(updateCityTierVisibility, 200));
+
   setText('map-attrib', '3D globe by CesiumJS | Esri World Imagery');
 }
 
@@ -2033,7 +2066,17 @@ async function main() {
   }
 
   applyI18n();
-  initMap();
+  // initMap throws if WebGL initialization fails (browser ran out of contexts,
+  // GPU crashed, etc.). Catch it so the page degrades gracefully with a hint
+  // instead of a stack trace, and do NOT auto-reload — that would loop forever.
+  try {
+    initMap();
+  } catch (err) {
+    if (loading) loading.classList.add('hidden');
+    flashHint('WebGL initialization failed. Close other tabs and reload.', 12000);
+    console.error('initMap failed:', err);
+    return;
+  }
   initSearch();
   initControls();
   flashHint(t('clickHint'), 5000);
@@ -2090,13 +2133,10 @@ function initScreensaver() {
     // culling is computed against the screensaver's camera, not whatever the user
     // was looking at before. Compact pills + showing tier 1+2 give the dense,
     // weather-everywhere look without overwhelming the Raspberry Pi GPU.
+    // NOTE: deliberately not touching resolutionScale here — toggling it forces
+    // Cesium to reallocate framebuffers, which can trigger WebGL context loss
+    // on the Pi GPU.
     screensaverActive = true;
-    // Drop render resolution to ~half during the spin: ~4x fewer fragment-shader
-    // invocations per frame on the Pi. Restored on dismiss.
-    if (map?.viewer) {
-      map.viewer._savedResolutionScale = map.viewer.resolutionScale;
-      map.viewer.resolutionScale = 0.6;
-    }
     focusOn(HOME_VIEW.lat, HOME_VIEW.lon, HOME_VIEW.range * 0.65);
     renderCityMarkers(cityWeatherCache);
     updateCityTierVisibility();
@@ -2126,11 +2166,6 @@ function initScreensaver() {
     // then fly back to the view the user had before the screensaver took over.
     // Falls back to HOME_VIEW if we never captured one.
     screensaverActive = false;
-    // Restore full render resolution.
-    if (map?.viewer && map.viewer._savedResolutionScale != null) {
-      map.viewer.resolutionScale = map.viewer._savedResolutionScale;
-      map.viewer._savedResolutionScale = null;
-    }
     renderCityMarkers(cityWeatherCache);
     const target = preScreensaverView ?? HOME_VIEW;
     flyToLocation(target.lat, target.lon, target.range, 1.2);

@@ -58,8 +58,12 @@ _cache: dict[str, dict[str, Any]] = {}
 # Weather icon file cache: code -> (raw_bytes, content_type)
 _icon_cache: dict[int, tuple[bytes, str]] = {}
 ICON_LOCAL_DIR = os.path.join("public", "icons")
-# Weather icon convention: 1-42 = day variants, 101-142 = night variants
-SUPPORTED_ICON_CODES = set(range(1, 43)) | set(range(101, 143))
+# Codes actually shipped under public/icons/ — kept aligned with the WMO_TO_METEO
+# mapping in public/app.js. Day codes 1-99, night codes 101-199 (where they
+# differ from day). Adjust both this set and download_open_source_icons.py if
+# the frontend mapping changes.
+SUPPORTED_ICON_CODES = {1, 2, 3, 5, 7, 8, 9, 13, 14, 15, 17, 18, 19, 20, 21, 23, 25, 26,
+                        101, 102, 103, 105}
 
 # Shared HTTP client (created in lifespan)
 _http: httpx.AsyncClient | None = None

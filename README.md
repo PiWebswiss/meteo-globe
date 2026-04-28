@@ -66,7 +66,7 @@ Open http://localhost:3000 in your browser.
 
 - `server.py`: FastAPI backend (weather proxy, icon serving, satellite tile caching)
 - `public/app.js`: globe UI, markers, weather panel
-- `public/icons/`: MeteoSwiss SVG weather icons
+- `public/icons/`: weather SVG icons (Bas Milius weather-icons, MIT — see [LICENSE-icons.md](LICENSE-icons.md)). Re-download with `python download_open_source_icons.py`.
 - `docker-compose.yml`: app container config
 
 
