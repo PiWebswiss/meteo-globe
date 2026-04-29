@@ -613,6 +613,28 @@ function buildActiveMarkerCanvas({ name, temp, iconImg }) {
   return c;
 }
 
+// Inlining multiple SVGs via innerHTML puts their <defs> IDs into the same
+// document scope. Our icon set reuses generic IDs ("a", "b", …), so a later
+// SVG's url(#a) / xlink:href="#b" resolves to the FIRST SVG inserted —
+// producing empty or wrong shapes. Rewrite IDs to be unique per insertion.
+let _svgInjectCounter = 0;
+function injectInlineSvg(target, svgText) {
+  if (!target || typeof svgText !== 'string') return false;
+  const prefix = `i${++_svgInjectCounter}`;
+  const ids = new Set();
+  svgText.replace(/\bid="([^"]+)"/g, (_, id) => { ids.add(id); return _; });
+  // Sort by length desc so "ab" is rewritten before "a" (avoids partial matches).
+  for (const id of [...ids].sort((a, b) => b.length - a.length)) {
+    const e = id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    const newId = `${prefix}-${id}`;
+    svgText = svgText.replace(new RegExp(`\\bid="${e}"`, 'g'), `id="${newId}"`);
+    svgText = svgText.replace(new RegExp(`\\b(?:xlink:href|href)="#${e}"`, 'g'), m => m.replace(`#${id}`, `#${newId}`));
+    svgText = svgText.replace(new RegExp(`url\\(#${e}\\)`, 'g'), `url(#${newId})`);
+  }
+  target.innerHTML = svgText;
+  return true;
+}
+
 // Preloads a weather icon image and calls back with the Image element.
 // Used to draw icons directly into marker canvases.
 function loadIconImage(iconCode, wmoCode, daytime, callback) {
@@ -713,9 +735,7 @@ function showPanel(data, opts = {}) {
   fetch(`/api/icon/${iconCode}`)
     .then(r => r.ok ? r.text() : null)
     .then(svgText => {
-      if (svgText && svgText.includes('<svg')) {
-        iconWrap.innerHTML = svgText;
-      } else {
+      if (!(svgText && svgText.includes('<svg') && injectInlineSvg(iconWrap, svgText))) {
         iconWrap.innerHTML = `<img id="hero-icon" src="${buildWeatherIconDataUrl(code, day)}" alt="Weather icon">`;
       }
     })
@@ -813,9 +833,7 @@ function renderForecast(scroll, daily) {
     fetch(`/api/icon/${iconCode}`)
       .then(r => r.ok ? r.text() : null)
       .then(svgText => {
-        if (svgText && svgText.includes('<svg')) {
-          fcIconEl.innerHTML = svgText;
-        } else {
+        if (!(svgText && svgText.includes('<svg') && injectInlineSvg(fcIconEl, svgText))) {
           fcIconEl.innerHTML = '<span>--</span>';
         }
       })
