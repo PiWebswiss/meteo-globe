@@ -63,7 +63,8 @@ ICON_LOCAL_DIR = os.path.join("public", "icons")
 # differ from day). Adjust both this set and download_open_source_icons.py if
 # the frontend mapping changes.
 SUPPORTED_ICON_CODES = {1, 2, 3, 5, 7, 8, 9, 13, 14, 15, 17, 18, 19, 20, 21, 23, 25, 26,
-                        101, 102, 103, 105}
+                        101, 102, 103, 105, 107, 108, 109, 113, 114, 115,
+                        117, 118, 119, 120, 121, 123, 125, 126}
 
 # Shared HTTP client (created in lifespan)
 _http: httpx.AsyncClient | None = None

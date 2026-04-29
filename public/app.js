@@ -96,34 +96,34 @@ function applyI18n() {
 // Maps WMO weather codes directly to MeteoSwiss icon codes.
 // { d: daytime icon, n: nighttime icon }
 const WMO_TO_METEO = {
-  0:  { d: 1, n: 101 },   // Clear sky
-  1:  { d: 2, n: 102 },   // Mainly clear
-  2:  { d: 3, n: 103 },   // Partly cloudy
-  3:  { d: 5, n: 105 },   // Overcast
-  45: { d: 25, n: 25 },   // Fog
-  48: { d: 25, n: 25 },   // Depositing rime fog
-  51: { d: 7, n: 7 },     // Light drizzle
-  53: { d: 7, n: 7 },     // Moderate drizzle
-  55: { d: 7, n: 7 },     // Dense drizzle
-  56: { d: 26, n: 26 },   // Light freezing drizzle
-  57: { d: 26, n: 26 },   // Dense freezing drizzle
-  61: { d: 7, n: 7 },     // Slight rain
-  63: { d: 8, n: 8 },     // Moderate rain
-  65: { d: 9, n: 9 },     // Heavy rain
-  66: { d: 26, n: 26 },   // Light freezing rain
-  67: { d: 26, n: 26 },   // Heavy freezing rain
-  71: { d: 13, n: 13 },   // Slight snow
-  73: { d: 14, n: 14 },   // Moderate snow
-  75: { d: 15, n: 15 },   // Heavy snow
-  77: { d: 15, n: 15 },   // Snow grains
-  80: { d: 17, n: 17 },   // Slight rain showers
-  81: { d: 18, n: 18 },   // Moderate rain showers
-  82: { d: 19, n: 19 },   // Violent rain showers
-  85: { d: 17, n: 17 },   // Slight snow showers
-  86: { d: 15, n: 15 },   // Heavy snow showers
-  95: { d: 23, n: 23 },   // Thunderstorm
-  96: { d: 20, n: 20 },   // Thunderstorm with slight hail
-  99: { d: 21, n: 21 },   // Thunderstorm with heavy hail
+  0:  { d: 1, n: 101 },    // Clear sky
+  1:  { d: 2, n: 102 },    // Mainly clear
+  2:  { d: 3, n: 103 },    // Partly cloudy
+  3:  { d: 5, n: 105 },    // Overcast
+  45: { d: 25, n: 125 },   // Fog
+  48: { d: 25, n: 125 },   // Depositing rime fog
+  51: { d: 7, n: 107 },    // Light drizzle
+  53: { d: 7, n: 107 },    // Moderate drizzle
+  55: { d: 7, n: 107 },    // Dense drizzle
+  56: { d: 26, n: 126 },   // Light freezing drizzle
+  57: { d: 26, n: 126 },   // Dense freezing drizzle
+  61: { d: 7, n: 107 },    // Slight rain
+  63: { d: 8, n: 108 },    // Moderate rain
+  65: { d: 9, n: 109 },    // Heavy rain
+  66: { d: 26, n: 126 },   // Light freezing rain
+  67: { d: 26, n: 126 },   // Heavy freezing rain
+  71: { d: 13, n: 113 },   // Slight snow
+  73: { d: 14, n: 114 },   // Moderate snow
+  75: { d: 15, n: 115 },   // Heavy snow
+  77: { d: 15, n: 115 },   // Snow grains
+  80: { d: 17, n: 117 },   // Slight rain showers
+  81: { d: 18, n: 118 },   // Moderate rain showers
+  82: { d: 19, n: 119 },   // Violent rain showers
+  85: { d: 17, n: 117 },   // Slight snow showers
+  86: { d: 15, n: 115 },   // Heavy snow showers
+  95: { d: 23, n: 123 },   // Thunderstorm
+  96: { d: 20, n: 120 },   // Thunderstorm with slight hail
+  99: { d: 21, n: 121 },   // Thunderstorm with heavy hail
 };
 
 // --- Constants ---
@@ -1818,32 +1818,34 @@ function initMap() {
   }
   // Dark base color prevents blue flash while satellite imagery loads
   viewer.scene.globe.baseColor = C.Color.fromCssColorString('#0a1628');
-  // Mobile GPUs choke on retina-scale Cesium rendering + sun-lit shader.
-  // Cap resolution and skip lighting on touch devices to keep things smooth.
-  const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
-  // Software renderers (SwiftShader, llvmpipe, Microsoft Basic Render) can't
-  // compile Cesium's lit-globe shader and crash on fullscreen resize at high
-  // resolution. Detect via the WEBGL_debug_renderer_info extension and treat
-  // them like mobile.
-  let isSoftware = false;
-  try {
-    const probe = viewer.scene.canvas.getContext('webgl2')
-      || viewer.scene.canvas.getContext('webgl');
-    const dbg = probe?.getExtension('WEBGL_debug_renderer_info');
-    const renderer = dbg ? probe.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '';
-    isSoftware = /swiftshader|software|llvmpipe|microsoft basic render/i.test(renderer);
-  } catch (_) {}
-  const lowPower = isMobile || isSoftware;
+
+  // Performance tuning: cut every Cesium feature that isn't strictly needed
+  // for "earth + city markers + click weather". Skybox alone forces six 4k
+  // texture downloads; sun/moon/atmosphere/fog all run extra shader passes.
+  viewer.scene.skyBox.show = false;
+  viewer.scene.sun.show = false;
+  viewer.scene.moon.show = false;
+  viewer.scene.skyAtmosphere.show = false;
+  viewer.scene.fog.enabled = false;
+  viewer.scene.globe.enableLighting = false;
+  // Resolution adapts to viewport size: on small screens render at full
+  // resolution (sharp), on large screens cap the total framebuffer pixel
+  // count so a 4K display doesn't pay 4x the fragment-shader cost. Target
+  // ~2M backing-store pixels — equivalent to 1080p, plenty for a globe.
+  // Since the page reloads on resize, this is computed once at init.
   viewer.useBrowserRecommendedResolution = false;
-  viewer.resolutionScale = lowPower ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  const TARGET_PIXELS = 2_000_000;
+  const vw = Math.max(1, window.innerWidth);
+  const vh = Math.max(1, window.innerHeight);
+  const scaleForScreen = Math.sqrt(TARGET_PIXELS / (vw * vh));
+  viewer.resolutionScale = Math.min(1, Math.max(0.5, scaleForScreen));
   // Only repaint when the scene actually changes (camera, entity, imagery).
-  // Massive GPU/battery win on mobile with no quality loss.
+  // Massive GPU/battery win when the globe sits idle (panel open, etc.).
   viewer.scene.requestRenderMode = true;
   viewer.scene.maximumRenderTimeChange = Infinity;
   // Satellite base layer (Esri World Imagery → NaturalEarthII → public OSM)
   addBaseImageryLayer(C, viewer);
 
-  viewer.scene.globe.enableLighting = !lowPower;
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2_000;
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000;
   viewer.scene.screenSpaceCameraController.enableTilt = true;
