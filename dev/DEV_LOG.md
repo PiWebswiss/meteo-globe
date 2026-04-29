@@ -299,3 +299,37 @@ Added the city name to each weather pill (name on top, temperature below, weathe
 - **`move_end` listener skipped during rotation** ([app.js:1685](public/app.js#L1685)) so the collision recompute doesn't fight the spin every frame.
 - **`map.rotateLon` adapter method removed** (was only called by the old setInterval-based rotation, now dead code).
 - Cache-busting bumped iteratively from `app.js?v=svg-icons-10` → `svg-icons-17` across the debugging session.
+
+### WebGL initialization, fullscreen, and resize hardening
+
+The previous Cesium 1.126 + Chrome 147 combination produced repeated `RuntimeError: The browser supports WebGL, but initialization failed` errors and shader compile failures during fullscreen / window resize. Diagnosed and fixed:
+
+- **Wrote a standalone diagnostic page** (`public/webgl-test.html`, since deleted) that probes WebGL2/WebGL1 with multiple option sets, queries `WEBGL_debug_renderer_info`, attempts to allocate up to 32 simultaneous contexts, and renders a real triangle. Confirmed the dev machine (RTX 3050 Laptop, ANGLE/D3D11) can do both WebGL1 and WebGL2 with default and relaxed options — so the failure was specific to Cesium, not the browser.
+- **Pinned Cesium to 1.119** in [public/app.js:330](public/app.js#L330): the last release that still honors `contextOptions.requestWebgl1`. Newer Cesium ships GLSL ES 3.00 shaders (with `flat` qualifiers) that fail to compile on WebGL1 contexts.
+- **Switched CDN from unpkg to jsDelivr**. Once Cesium initialized, unpkg was returning runtime asset XHRs (skybox textures, IAU2006 ephemerides, worker scripts) without `Access-Control-Allow-Origin` headers, blocking them. jsDelivr serves the same packages with permissive CORS.
+- **Wrapped `new C.Viewer(...)` in try/catch** with an inline fallback panel (globe icon + "3D globe unavailable" message) for devices that genuinely can't get any WebGL context, so the whole app no longer dies on a single Cesium failure.
+- **Stripped `contextOptions` to bare minimum**: only `failIfMajorPerformanceCaveat: false` is set now, letting Cesium pick its own defaults for `alpha` / `antialias` / WebGL version. Maximizes the chance the GPU accepts the request.
+- **Hid Cesium's built-in error panel** via CSS (`.cesium-widget-errorPanel { display: none !important }`) since it positions poorly in fullscreen and showed up as a cropped dark-blue mess.
+
+### Resize / fullscreen → page reload
+
+Replaced the in-place resize handler with a debounced page reload. The previous version called `viewer.resize()` + capped `resolutionScale` to keep Cesium happy through every resize event, but on weak GPUs this still triggered shader recompile failures and framebuffer-realloc crashes when entering fullscreen.
+
+- On any window resize or `fullscreenchange` event, the loading screen reappears instantly (overriding its 0.7s opacity transition with `style.transition = 'none'`) and a 250ms-debounced `location.reload()` fires after the resize settles.
+- The reload guarantees Cesium reinitializes cleanly at the new viewport size — no shader recompile risk, no surprises.
+- Removed the old `handleResize` rAF-coalesced handler, the `MAX_LOW_POWER_PIXELS` constant, and the staggered `onFullscreenChange` retries (`setTimeout(handleResize, 150/400)`) since they're all moot when the page is about to reload.
+- Simplified the render-error recovery from a 4-step gradual degradation (lighting off → 0.5x → 0.25x → flashHint) to a single recovery attempt, since the most common failure path (resize-triggered) is now eliminated by the reload approach.
+
+Cache-busting bumped iteratively across the debugging session: `webgl-fix-1` → `resize-fix-1` → `cesium-1.131` → `cesium-latest` → `cesium-webgl1` → `cesium-webgl2-fix` → `fullscreen-recovery` → `cesium-1.119-webgl1` → `cesium-jsdelivr` → `resize-reload` → `resize-reload-fast` → `cleanup-1`.
+
+### Deployment note: CPU-only / GPU-less devices
+
+For devices without working GPU drivers (Pi without Mesa, headless server, etc.), modern Chrome since v110 refuses to provide a WebGL context unless launched with an explicit flag. The application already has `failIfMajorPerformanceCaveat: false` so it accepts software rendering when offered — but Chrome will not offer it without the launch flag.
+
+**Launch command for CPU-only deployment:**
+
+```bash
+chromium-browser --enable-unsafe-swiftshader http://localhost:3000
+```
+
+Or on the Pi as part of the kiosk autostart script. Performance on a CPU-only device is approximately 1–5 fps for the 3D globe — acceptable for a passive kiosk display, not for interactive use. With any working GPU (including the Pi's VideoCore), no flag is needed and the globe runs at 30–60 fps.

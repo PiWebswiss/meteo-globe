@@ -327,7 +327,14 @@ async function ensureCesiumLoaded() {
   }
 
   cesiumLoadPromise = (async () => {
-    const base = 'https://unpkg.com/cesium@1.126.0/Build/Cesium/';
+    // Pinned to 1.119: last release that still honors `requestWebgl1`. Newer
+    // Cesium ships WebGL2-only shaders (GLSL ES 3.00 with `flat` qualifiers)
+    // that fail to compile on devices without WebGL2 — letting us opt back to
+    // WebGL1 here is what makes the app run on the broadest range of hardware.
+    // Served from jsDelivr: unpkg's CORS policy blocks Cesium's runtime asset
+    // XHR (skybox textures, IAU2006 ephemerides, worker scripts), jsDelivr
+    // sends Access-Control-Allow-Origin: * for these requests.
+    const base = 'https://cdn.jsdelivr.net/npm/cesium@1.119.0/Build/Cesium/';
     window.CESIUM_BASE_URL = base;
     ensureStylesheetLoaded(`${base}Widgets/widgets.css`);
     await loadScriptWithTimeout(`${base}Cesium.js`, 22000);
@@ -1769,27 +1776,66 @@ function initMap() {
   const container = document.getElementById('globe-container');
   container.innerHTML = '';
   const C = window.Cesium;
-  const viewer = new C.Viewer(container, {
-    animation: false,
-    timeline: false,
-    baseLayerPicker: false,
-    geocoder: false,
-    homeButton: false,
-    sceneModePicker: false,
-    navigationHelpButton: false,
-    fullscreenButton: false,
-    infoBox: false,
-    selectionIndicator: false,
-    terrainProvider: new C.EllipsoidTerrainProvider(),
-    baseLayer: false,
-  });
+  // Wrap construction in try/catch: if the device can't give us a WebGL
+  // context at all (no GPU + Chrome blocking software fallback, etc.), we
+  // show a static fallback panel instead of letting the whole app die.
+  let viewer;
+  try {
+    viewer = new C.Viewer(container, {
+      animation: false,
+      timeline: false,
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      navigationHelpButton: false,
+      fullscreenButton: false,
+      infoBox: false,
+      selectionIndicator: false,
+      terrainProvider: new C.EllipsoidTerrainProvider(),
+      baseLayer: false,
+      // Bare-minimum contextOptions: just relax the performance caveat so the
+      // browser accepts a software-rendered fallback. Don't override alpha,
+      // antialias, or webgl version — let Cesium pick its own defaults to
+      // maximize the chance that the GPU/driver accepts the request.
+      contextOptions: {
+        webgl: {
+          failIfMajorPerformanceCaveat: false,
+        },
+      },
+    });
+  } catch (err) {
+    console.error('Cesium init failed:', err);
+    container.innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:center;height:100vh;color:#fff;font-family:Inter,sans-serif;text-align:center;padding:20px;">
+        <div>
+          <div style="font-size:48px;margin-bottom:16px;">&#127757;</div>
+          <div style="font-size:18px;margin-bottom:8px;">3D globe unavailable</div>
+          <div style="font-size:13px;opacity:0.7;">This device or browser doesn't support the required WebGL features.<br>Try another browser, enable hardware acceleration, or update GPU drivers.</div>
+        </div>
+      </div>`;
+    throw err;
+  }
   // Dark base color prevents blue flash while satellite imagery loads
   viewer.scene.globe.baseColor = C.Color.fromCssColorString('#0a1628');
   // Mobile GPUs choke on retina-scale Cesium rendering + sun-lit shader.
   // Cap resolution and skip lighting on touch devices to keep things smooth.
   const isMobile = /Mobi|Android|iPhone|iPad/i.test(navigator.userAgent);
+  // Software renderers (SwiftShader, llvmpipe, Microsoft Basic Render) can't
+  // compile Cesium's lit-globe shader and crash on fullscreen resize at high
+  // resolution. Detect via the WEBGL_debug_renderer_info extension and treat
+  // them like mobile.
+  let isSoftware = false;
+  try {
+    const probe = viewer.scene.canvas.getContext('webgl2')
+      || viewer.scene.canvas.getContext('webgl');
+    const dbg = probe?.getExtension('WEBGL_debug_renderer_info');
+    const renderer = dbg ? probe.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : '';
+    isSoftware = /swiftshader|software|llvmpipe|microsoft basic render/i.test(renderer);
+  } catch (_) {}
+  const lowPower = isMobile || isSoftware;
   viewer.useBrowserRecommendedResolution = false;
-  viewer.resolutionScale = isMobile ? 1 : Math.min(window.devicePixelRatio || 1, 2);
+  viewer.resolutionScale = lowPower ? 1 : Math.min(window.devicePixelRatio || 1, 2);
   // Only repaint when the scene actually changes (camera, entity, imagery).
   // Massive GPU/battery win on mobile with no quality loss.
   viewer.scene.requestRenderMode = true;
@@ -1797,10 +1843,30 @@ function initMap() {
   // Satellite base layer (Esri World Imagery → NaturalEarthII → public OSM)
   addBaseImageryLayer(C, viewer);
 
-  viewer.scene.globe.enableLighting = !isMobile;
+  viewer.scene.globe.enableLighting = !lowPower;
   viewer.scene.screenSpaceCameraController.minimumZoomDistance = 2_000;
   viewer.scene.screenSpaceCameraController.maximumZoomDistance = 40_000_000;
   viewer.scene.screenSpaceCameraController.enableTilt = true;
+
+  // Render-error recovery: with resize-reload handling viewport changes, the
+  // remaining cause of mid-session render errors is async imagery / texture
+  // loading. One recovery attempt (drop lighting + halve resolution) is enough
+  // — if it fails again, prompt the user to reload.
+  let recoveryDone = false;
+  viewer.scene.renderError.addEventListener((_scene, err) => {
+    console.warn('Cesium render error:', err);
+    if (recoveryDone) {
+      flashHint('Globe rendering failed. Reload to retry.', 12000);
+      return;
+    }
+    recoveryDone = true;
+    try {
+      viewer.scene.globe.enableLighting = false;
+      viewer.resolutionScale = 0.5;
+      viewer.useDefaultRenderLoop = true;
+      viewer.scene.requestRender();
+    } catch (_) {}
+  });
 
   map = createCesiumMapAdapter(viewer);
   bindMapEventHandlers(map);
@@ -1837,15 +1903,33 @@ function initMap() {
     }, false);
   }
 
-  // Fullscreen / resize: with requestRenderMode = true, Cesium repaints on demand.
-  // A fullscreen toggle changes the canvas size but doesn't always trigger a render
-  // on its own, so the globe can look stretched or blank until the next interaction.
-  // Force a render after fullscreen changes and after resize events.
-  const requestRenderSafe = () => { try { viewer.scene.requestRender(); } catch (_) {} };
-  window.addEventListener('resize', requestRenderSafe);
-  document.addEventListener('fullscreenchange', () => setTimeout(requestRenderSafe, 100));
-  // Re-renders the marker visibility too in case backside culling changed.
-  document.addEventListener('fullscreenchange', () => setTimeout(updateCityTierVisibility, 200));
+  // Resize / fullscreen strategy: rather than try to keep Cesium happy through
+  // every viewport change (which historically caused shader recompile failures
+  // and framebuffer-realloc crashes on weak GPUs), reload the page once the
+  // resize settles. The loading screen appears instantly so the user has
+  // immediate feedback, and the reload fires 250ms after the last resize event.
+  let lastSize = `${window.innerWidth}x${window.innerHeight}`;
+  let reloadTimer = null;
+  const scheduleReload = () => {
+    const next = `${window.innerWidth}x${window.innerHeight}`;
+    if (next === lastSize) return;
+    lastSize = next;
+    // Show the loader instantly. The CSS sets a 0.7s opacity transition for
+    // the initial fade-out; override it with style.transition='none' so the
+    // resize-triggered show is immediate.
+    const loader = document.getElementById('loading-screen');
+    if (loader) {
+      loader.style.transition = 'none';
+      loader.classList.remove('hidden');
+      loader.style.opacity = '1';
+      loader.style.visibility = 'visible';
+    }
+    clearTimeout(reloadTimer);
+    reloadTimer = setTimeout(() => location.reload(), 250);
+  };
+  window.addEventListener('resize', scheduleReload);
+  document.addEventListener('fullscreenchange', scheduleReload);
+  document.addEventListener('webkitfullscreenchange', scheduleReload);
 
   setText('map-attrib', '3D globe by CesiumJS | Esri World Imagery');
 }
@@ -2071,9 +2155,11 @@ async function main() {
   // instead of a stack trace, and do NOT auto-reload — that would loop forever.
   try {
     initMap();
+    // Successful boot — clear any stale reload guard from a previous crash.
+    sessionStorage.removeItem('mg_webgl_reloaded');
   } catch (err) {
     if (loading) loading.classList.add('hidden');
-    flashHint('WebGL initialization failed. Close other tabs and reload.', 12000);
+    flashHint('WebGL initialization failed. Close other tabs, enable hardware acceleration in your browser, and reload.', 15000);
     console.error('initMap failed:', err);
     return;
   }

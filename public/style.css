@@ -80,6 +80,10 @@ html, body {
   cursor: grab;
 }
 #globe-container:active { cursor: grabbing; }
+/* Hide Cesium's built-in red error panel; it positions poorly in fullscreen
+   and is mostly off-screen. We log render errors to the console and show a
+   hint via the app's own flashHint banner instead. */
+.cesium-widget-errorPanel { display: none !important; }
 
 /* â”€â”€â”€ Top Bar â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€ */
 .topbar {
